@@ -1,11 +1,12 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "MERN Authentication Backend",
+  "description": "Library Booking Backend with Break Feature",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "init-seats": "node scripts/initializeSeats.js"
   },
   "keywords": [],
   "author": "",

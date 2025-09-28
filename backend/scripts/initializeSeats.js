@@ -19,7 +19,7 @@ const initializeSeats = async () => {
       seats.push({
         seatNumber: i,
         location: 'Main Library',
-        isBooked: false
+        bookings: []
       });
     }
 
@@ -28,7 +28,7 @@ const initializeSeats = async () => {
       seats.push({
         seatNumber: i,
         location: 'Reading Hall 1',
-        isBooked: false
+        bookings: []
       });
     }
 
@@ -37,7 +37,7 @@ const initializeSeats = async () => {
       seats.push({
         seatNumber: i,
         location: 'Reading Hall 2',
-        isBooked: false
+        bookings: []
       });
     }
 

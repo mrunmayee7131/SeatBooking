@@ -10,19 +10,38 @@ const seatSchema = new mongoose.Schema({
     required: true,
     enum: ['Main Library', 'Reading Hall 1', 'Reading Hall 2']
   },
-  isBooked: {
-    type: Boolean,
-    default: false
-  },
-  bookedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    default: null
-  },
-  bookedAt: {
-    type: Date,
-    default: null
-  }
+  bookings: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    userName: {
+      type: String,
+      required: true
+    },
+    userEmail: {
+      type: String,
+      required: true
+    },
+    startTime: {
+      type: Date,
+      required: true
+    },
+    endTime: {
+      type: Date,
+      required: true
+    },
+    bookedAt: {
+      type: Date,
+      default: Date.now
+    },
+    status: {
+      type: String,
+      enum: ['active', 'on-break'],
+      default: 'active'
+    }
+  }]
 }, {
   timestamps: true
 });
