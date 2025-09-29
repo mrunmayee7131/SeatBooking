@@ -161,7 +161,26 @@ exports.getSeats = async (req, res) => {
           isAvailable = true;
         }
 
-        console.log(`Seat ${seat.seatNumber}: active=${activeBookings.length}, breaks=${breakBookings.length}, status=${status}`);
+        // STEP 4: Get upcoming bookings for next 24 hours
+        const now = new Date();
+        const next24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+        
+        const upcomingBookings = seat.bookings
+          .filter(booking => {
+            const bookingStart = new Date(booking.startTime);
+            const bookingEnd = new Date(booking.endTime);
+            // Include bookings that start within next 24 hours or are currently active
+            return bookingEnd > now && bookingStart < next24Hours;
+          })
+          .sort((a, b) => new Date(a.startTime) - new Date(b.startTime))
+          .map(booking => ({
+            userName: booking.userName,
+            startTime: booking.startTime,
+            endTime: booking.endTime,
+            status: booking.status
+          }));
+
+        console.log(`Seat ${seat.seatNumber}: active=${activeBookings.length}, breaks=${breakBookings.length}, status=${status}, upcoming=${upcomingBookings.length}`);
 
         return {
           ...seat.toObject(),
@@ -171,7 +190,8 @@ exports.getSeats = async (req, res) => {
           breakSlots: breakBookings.map(b => ({
             start: b.startTime,
             end: b.endTime
-          }))
+          })),
+          upcomingBookings
         };
       });
 
@@ -246,6 +266,15 @@ exports.bookSeat = async (req, res) => {
       const breakOwnerId = overlappingBreaks[0].user.toString();
       
       console.log(`Break period: ${breakStart} to ${breakEnd}, Owner: ${breakOwnerId}`);
+      console.log(`Current user: ${userId}`);
+      
+      // CRITICAL: Prevent break owner from booking their own break time
+      if (breakOwnerId === userId) {
+        return res.status(400).json({ 
+          message: 'You cannot book your own seat during your break time. This time is available for others to use.'
+        });
+      }
+      
       console.log(`Checking: ${start} >= ${breakStart} && ${end} <= ${breakEnd}`);
       
       // The booking must be completely within the break time
@@ -550,8 +579,29 @@ exports.getSeatDetails = async (req, res) => {
 
     const availableSlots = getAvailableTimeSlots(seat.bookings, start, end);
 
+    // Get upcoming bookings for next 24 hours
+    const now = new Date();
+    const next24Hours = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    
+    const upcomingBookings = seat.bookings
+      .filter(booking => {
+        const bookingStart = new Date(booking.startTime);
+        const bookingEnd = new Date(booking.endTime);
+        return bookingEnd > now && bookingStart < next24Hours;
+      })
+      .sort((a, b) => new Date(a.startTime) - new Date(b.startTime))
+      .map(booking => ({
+        userName: booking.userName,
+        startTime: booking.startTime,
+        endTime: booking.endTime,
+        status: booking.status
+      }));
+
     res.json({
-      seat,
+      seat: {
+        ...seat.toObject(),
+        upcomingBookings
+      },
       availableSlots,
       currentBookings: seat.bookings.filter(b => new Date(b.endTime) > new Date())
     });

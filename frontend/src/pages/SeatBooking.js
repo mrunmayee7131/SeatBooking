@@ -398,6 +398,7 @@ const SeatBooking = () => {
               key={seat._id}
               className={`seat ${seat.status || 'available'}`}
               onClick={() => handleSeatClick(seat)}
+              title={`Seat ${seat.seatNumber} - Click for details`}
             >
               {seat.seatNumber}
             </div>
@@ -463,12 +464,50 @@ const SeatBooking = () => {
       {/* Seat Info Modal */}
       {showSeatInfoModal && seatDetails && (
         <div className="modal-overlay" onClick={() => setShowSeatInfoModal(false)}>
-          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+          <div className="modal-content seat-info-modal" onClick={(e) => e.stopPropagation()}>
             <h3>Seat {seatDetails.seat.seatNumber} - Details</h3>
             <p><strong>Location:</strong> {seatDetails.seat.location}</p>
 
+            {/* Upcoming Bookings Table */}
+            {seatDetails.seat.upcomingBookings && seatDetails.seat.upcomingBookings.length > 0 && (
+              <div className="upcoming-bookings-section">
+                <h4>📅 Upcoming Bookings (Next 24 Hours)</h4>
+                <div className="bookings-table-container">
+                  <table className="bookings-table">
+                    <thead>
+                      <tr>
+                        <th>User</th>
+                        <th>Start Time</th>
+                        <th>End Time</th>
+                        <th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {seatDetails.seat.upcomingBookings.map((booking, idx) => (
+                        <tr key={idx} className={booking.status === 'on-break' ? 'break-row' : ''}>
+                          <td className="user-cell">
+                            <span className="user-icon">👤</span>
+                            <strong>{booking.userName}</strong>
+                          </td>
+                          <td>{formatDateTime(booking.startTime)}</td>
+                          <td>{formatDateTime(booking.endTime)}</td>
+                          <td>
+                            {booking.status === 'on-break' ? (
+                              <span className="status-tag break-tag">🔔 On Break</span>
+                            ) : (
+                              <span className="status-tag active-tag">✓ Active</span>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
             <div className="seat-details">
-              <h4>Availability:</h4>
+              <h4>Availability for Selected Time:</h4>
               {seatDetails.availableSlots.length === 0 ? (
                 <p className="fully-booked">This seat is fully booked for the selected time period.</p>
               ) : (
