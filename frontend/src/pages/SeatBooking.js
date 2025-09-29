@@ -88,6 +88,7 @@ const SeatBooking = () => {
         `http://localhost:5000/api/seats/${loc}?startTime=${start}&endTime=${end}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
+      console.log('Fetched seats:', res.data);
       setSeats(res.data);
     } catch (err) {
       setError('Failed to fetch seats');
@@ -142,7 +143,8 @@ const SeatBooking = () => {
   };
 
   const handleSeatClick = (seat) => {
-    if (seat.isAvailable || seat.status === 'limited') {
+    console.log('Seat clicked:', seat);
+    if (seat.status === 'available' || seat.status === 'limited') {
       setSelectedSeat(seat);
       setShowBookingModal(true);
     } else {
@@ -173,6 +175,7 @@ const SeatBooking = () => {
       alert('Seat booked successfully!');
       setSelectedSeat(null);
       setShowBookingModal(false);
+      setError('');
       fetchSeats(location, startTime, endTime);
       fetchActiveBookings();
     } catch (err) {
@@ -216,6 +219,7 @@ const SeatBooking = () => {
       setShowBreakModal(false);
       setBreakStart('');
       setBreakEnd('');
+      setError('');
       fetchActiveBookings();
       fetchSeats(location, startTime, endTime);
     } catch (err) {
@@ -227,6 +231,7 @@ const SeatBooking = () => {
 
   const openBreakModal = (booking) => {
     setSelectedBookingForBreak(booking);
+    setError('');
     const now = new Date();
     const bookingStart = new Date(booking.startTime);
     const bookingEnd = new Date(booking.endTime);
@@ -277,6 +282,7 @@ const SeatBooking = () => {
       case 'active': return 'status-active';
       case 'completed': return 'status-completed';
       case 'cancelled': return 'status-cancelled';
+      case 'expired': return 'status-expired';
       case 'on-break': return 'status-break';
       default: return '';
     }
@@ -401,20 +407,28 @@ const SeatBooking = () => {
 
       {/* Booking Modal */}
       {showBookingModal && selectedSeat && (
-        <div className="modal-overlay" onClick={() => setShowBookingModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowBookingModal(false); setError(''); }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Book Seat {selectedSeat.seatNumber}</h3>
             <p><strong>Location:</strong> {selectedSeat.location}</p>
             
-            {selectedSeat.status === 'limited' && (
+            {selectedSeat.status === 'limited' && selectedSeat.breakSlots && selectedSeat.breakSlots.length > 0 && (
               <div className="limited-warning">
-                <p>⚠️ <strong>Limited Availability</strong></p>
-                <p>This seat is on break during your selected time. You can only book within the break period.</p>
+                <p>⚠️ <strong>Limited Availability - Seat on Break</strong></p>
+                <p>This seat is available only during the following break period:</p>
+                {selectedSeat.breakSlots.map((slot, idx) => (
+                  <p key={idx} className="break-slot-info">
+                    📅 {formatDateTime(slot.start)} → {formatDateTime(slot.end)}
+                  </p>
+                ))}
+                <p style={{marginTop: '10px', fontSize: '0.9rem', color: '#856404'}}>
+                  Your booking must be completely within this time range.
+                </p>
               </div>
             )}
 
             <div className="booking-summary">
-              <p><strong>Selected Time:</strong></p>
+              <p><strong>Your Selected Time:</strong></p>
               <p>{formatDateTime(startTime)} → {formatDateTime(endTime)}</p>
             </div>
 
@@ -481,6 +495,9 @@ const SeatBooking = () => {
                   {seatDetails.currentBookings.map((booking, idx) => (
                     <div key={idx} className="booking-info-item">
                       <p>
+                        <strong>👤 {booking.userName}</strong>
+                      </p>
+                      <p>
                         {formatDateTime(booking.startTime)} - {formatDateTime(booking.endTime)}
                         {booking.status === 'on-break' && <span className="break-badge">On Break - Available</span>}
                       </p>
@@ -498,7 +515,7 @@ const SeatBooking = () => {
 
       {/* Break Modal */}
       {showBreakModal && selectedBookingForBreak && (
-        <div className="modal-overlay" onClick={() => setShowBreakModal(false)}>
+        <div className="modal-overlay" onClick={() => { setShowBreakModal(false); setError(''); }}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Take a Break</h3>
             <div className="booking-summary">

@@ -107,19 +107,8 @@ exports.getSeats = async (req, res) => {
       const end = new Date(endTime);
 
       const seatsWithAvailability = seats.map(seat => {
-        // Check for active bookings that conflict
-        const hasActiveConflict = seat.bookings.some(booking => {
-          if (booking.status !== 'active') return false;
-          return timeSlotsOverlap(
-            new Date(booking.startTime),
-            new Date(booking.endTime),
-            start,
-            end
-          );
-        });
-
-        // Check for on-break bookings (limited availability)
-        const hasBreakConflict = seat.bookings.some(booking => {
+        // STEP 1: Find all on-break bookings that overlap with query time
+        const breakBookings = seat.bookings.filter(booking => {
           if (booking.status !== 'on-break') return false;
           return timeSlotsOverlap(
             new Date(booking.startTime),
@@ -129,21 +118,60 @@ exports.getSeats = async (req, res) => {
           );
         });
 
+        // STEP 2: Find active bookings, but EXCLUDE parts covered by breaks
+        const activeBookings = seat.bookings.filter(booking => {
+          if (booking.status !== 'active') return false;
+          
+          const bookingStart = new Date(booking.startTime);
+          const bookingEnd = new Date(booking.endTime);
+          
+          // Check if this active booking overlaps with query
+          if (!timeSlotsOverlap(bookingStart, bookingEnd, start, end)) {
+            return false;
+          }
+          
+          // Check if the OVERLAP portion is covered by a break
+          const overlapStart = new Date(Math.max(bookingStart.getTime(), start.getTime()));
+          const overlapEnd = new Date(Math.min(bookingEnd.getTime(), end.getTime()));
+          
+          // See if this overlap is completely covered by break time
+          const isCoveredByBreak = breakBookings.some(brk => {
+            const brkStart = new Date(brk.startTime);
+            const brkEnd = new Date(brk.endTime);
+            return brkStart <= overlapStart && brkEnd >= overlapEnd;
+          });
+          
+          // If overlap is covered by break, don't count this as a conflict
+          return !isCoveredByBreak;
+        });
+
         const availableSlots = getAvailableTimeSlots(seat.bookings, start, end);
 
-        // Determine seat status
+        // STEP 3: Determine seat status
         let status = 'available';
-        if (hasActiveConflict) {
+        let isAvailable = true;
+
+        if (activeBookings.length > 0) {
+          // Has uncovered active bookings - fully booked
           status = 'booked';
-        } else if (hasBreakConflict) {
-          status = 'limited'; // Yellow - break time, limited availability
+          isAvailable = false;
+        } else if (breakBookings.length > 0) {
+          // Only has break bookings - limited availability
+          status = 'limited';
+          isAvailable = true;
         }
+
+        console.log(`Seat ${seat.seatNumber}: active=${activeBookings.length}, breaks=${breakBookings.length}, status=${status}`);
 
         return {
           ...seat.toObject(),
-          isAvailable: !hasActiveConflict,
+          isAvailable,
           status,
-          availableSlots
+          availableSlots,
+          breakSlots: breakBookings.map(b => ({
+            start: b.startTime,
+            end: b.endTime
+          }))
         };
       });
 
@@ -153,7 +181,8 @@ exports.getSeats = async (req, res) => {
     const seatsWithSlots = seats.map(seat => ({
       ...seat.toObject(),
       availableSlots: getAvailableTimeSlots(seat.bookings, null, null),
-      status: 'available'
+      status: 'available',
+      isAvailable: true
     }));
 
     res.json(seatsWithSlots);
@@ -196,23 +225,8 @@ exports.bookSeat = async (req, res) => {
       return res.status(404).json({ message: 'Seat not found' });
     }
 
-    // Check for conflicts with active bookings (not on-break)
-    const hasConflict = seat.bookings.some(booking => {
-      if (booking.status === 'on-break') return false;
-      return timeSlotsOverlap(
-        new Date(booking.startTime),
-        new Date(booking.endTime),
-        start,
-        end
-      );
-    });
-
-    if (hasConflict) {
-      return res.status(400).json({ message: 'This seat is already booked for the selected time slot' });
-    }
-
-    // Check if trying to book during someone's break
-    const breakBookings = seat.bookings.filter(booking => 
+    // CRITICAL: Find all on-break periods that overlap with requested time
+    const overlappingBreaks = seat.bookings.filter(booking => 
       booking.status === 'on-break' &&
       timeSlotsOverlap(
         new Date(booking.startTime),
@@ -222,15 +236,61 @@ exports.bookSeat = async (req, res) => {
       )
     );
 
-    if (breakBookings.length > 0) {
-      // User can only book if their time is WITHIN the break period
-      const breakStart = new Date(breakBookings[0].startTime);
-      const breakEnd = new Date(breakBookings[0].endTime);
+    console.log(`Booking attempt: ${start} to ${end}`);
+    console.log(`Found ${overlappingBreaks.length} overlapping breaks`);
+
+    // If booking overlaps with breaks, it MUST be completely within ONE break period
+    if (overlappingBreaks.length > 0) {
+      const breakStart = new Date(overlappingBreaks[0].startTime);
+      const breakEnd = new Date(overlappingBreaks[0].endTime);
+      const breakOwnerId = overlappingBreaks[0].user.toString();
       
+      console.log(`Break period: ${breakStart} to ${breakEnd}, Owner: ${breakOwnerId}`);
+      console.log(`Checking: ${start} >= ${breakStart} && ${end} <= ${breakEnd}`);
+      
+      // The booking must be completely within the break time
       if (start < breakStart || end > breakEnd) {
         return res.status(400).json({ 
-          message: `This seat has limited availability (on-break). You can only book from ${breakStart.toLocaleString()} to ${breakEnd.toLocaleString()}`
+          message: `Limited availability. You can only book from ${breakStart.toLocaleString()} to ${breakEnd.toLocaleString()}`
         });
+      }
+      
+      console.log('✅ Booking is within break time - ALLOWED');
+      
+      // CRITICAL FIX: Check if someone else (NOT the break owner) already booked this slot
+      const breakSlotConflict = seat.bookings.some(booking => {
+        if (booking.status !== 'active') return false;
+        if (booking.user.toString() === userId) return false; // Ignore current user's bookings
+        if (booking.user.toString() === breakOwnerId) return false; // IGNORE break owner's main booking
+        
+        return timeSlotsOverlap(
+          new Date(booking.startTime),
+          new Date(booking.endTime),
+          start,
+          end
+        );
+      });
+      
+      if (breakSlotConflict) {
+        return res.status(400).json({ 
+          message: 'This break time slot has already been booked by another user'
+        });
+      }
+      
+    } else {
+      // No break overlap - check for regular active booking conflicts
+      const hasActiveConflict = seat.bookings.some(booking => {
+        if (booking.status !== 'active') return false;
+        return timeSlotsOverlap(
+          new Date(booking.startTime),
+          new Date(booking.endTime),
+          start,
+          end
+        );
+      });
+
+      if (hasActiveConflict) {
+        return res.status(400).json({ message: 'This seat is already booked for the selected time slot' });
       }
     }
 
@@ -259,11 +319,14 @@ exports.bookSeat = async (req, res) => {
       breaks: []
     });
 
+    console.log('✅ Booking created successfully');
+
     res.json({ 
       message: 'Seat booked successfully', 
       booking 
     });
   } catch (error) {
+    console.error('Booking error:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 };
@@ -347,6 +410,8 @@ exports.putOnBreak = async (req, res) => {
         status: 'on-break'
       });
       await seat.save();
+      
+      console.log(`✅ Break added: ${start} to ${end} for seat ${seat.seatNumber}`);
     }
 
     res.json({ 
@@ -379,18 +444,32 @@ exports.cancelBooking = async (req, res) => {
     booking.status = 'cancelled';
     await booking.save();
 
-    // Remove booking from seat (both active and on-break bookings)
+    // Remove ALL bookings from seat (both active and on-break) for this user
     const seat = await Seat.findOne({
       seatNumber: booking.seatNumber,
       location: booking.location
     });
 
     if (seat) {
+      // Remove the main booking
       seat.bookings = seat.bookings.filter(b => 
         !(b.user.toString() === userId && 
           b.startTime.getTime() === booking.startTime.getTime() &&
-          b.endTime.getTime() === booking.endTime.getTime())
+          b.endTime.getTime() === booking.endTime.getTime() &&
+          b.status === 'active')
       );
+      
+      // Also remove all on-break bookings for this user during this time
+      seat.bookings = seat.bookings.filter(b => {
+        if (b.status !== 'on-break' || b.user.toString() !== userId) return true;
+        // Remove break bookings that fall within the cancelled booking period
+        const breakStart = new Date(b.startTime);
+        const breakEnd = new Date(b.endTime);
+        const bookingStart = new Date(booking.startTime);
+        const bookingEnd = new Date(booking.endTime);
+        return !(breakStart >= bookingStart && breakEnd <= bookingEnd);
+      });
+      
       await seat.save();
     }
 
@@ -426,11 +505,27 @@ exports.getMyActiveBookings = async (req, res) => {
 exports.getMyBookings = async (req, res) => {
   try {
     const userId = req.user.id;
+    const now = new Date();
     
+    // Get all bookings for the user
     const bookings = await Booking.find({ user: userId })
       .sort({ bookedAt: -1 });
     
-    res.json({ bookings });
+    // Mark expired bookings as completed
+    const bookingsWithStatus = bookings.map(booking => {
+      const bookingObj = booking.toObject();
+      
+      // If booking is active but endTime has passed, mark as expired
+      if (bookingObj.status === 'active' && new Date(bookingObj.endTime) < now) {
+        bookingObj.status = 'expired';
+        // Also update in database
+        Booking.findByIdAndUpdate(booking._id, { status: 'completed' }).exec();
+      }
+      
+      return bookingObj;
+    });
+    
+    res.json({ bookings: bookingsWithStatus });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
   }
