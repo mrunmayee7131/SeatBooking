@@ -1,61 +1,90 @@
 const Seat = require('../models/Seat');
 const Booking = require('../models/Booking');
 
-// Helper function to check if time slots overlap
+// Helper function to check if two time slots overlap
 const timeSlotsOverlap = (start1, end1, start2, end2) => {
-  return start1 < end2 && start2 < end1;
+  return start1 < end2 && end1 > start2;
 };
 
 // Helper function to get available time slots
 const getAvailableTimeSlots = (bookings, queryStart, queryEnd) => {
-  const now = new Date();
   const slots = [];
-
-  // Filter active bookings and breaks
-  const activeBookings = bookings.filter(b => 
-    b.status === 'active' && new Date(b.endTime) > now
-  );
+  const now = new Date();
+  
+  // Filter out past and on-break bookings, only consider active bookings
+  const activeBookings = bookings
+    .filter(b => b.status === 'active' && new Date(b.endTime) > now)
+    .sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
 
   if (activeBookings.length === 0) {
-    return [{ start: null, end: null, duration: 'Infinity' }];
+    if (queryEnd) {
+      const duration = Math.floor((new Date(queryEnd) - new Date(queryStart)) / (1000 * 60));
+      return [{
+        start: queryStart,
+        end: queryEnd,
+        duration: `${duration} minutes`
+      }];
+    }
+    return [{ start: now, end: null, duration: 'Infinity' }];
   }
 
-  // Sort bookings by start time
-  activeBookings.sort((a, b) => new Date(a.startTime) - new Date(b.startTime));
+  const startBoundary = queryStart ? new Date(queryStart) : now;
+  const endBoundary = queryEnd ? new Date(queryEnd) : null;
 
-  let currentTime = queryStart ? new Date(queryStart) : now;
-  const endBoundary = queryEnd ? new Date(queryEnd) : new Date(now.getTime() + 365 * 24 * 60 * 60 * 1000);
+  // Check for slot before first booking
+  const firstBookingStart = new Date(activeBookings[0].startTime);
+  if (firstBookingStart > startBoundary) {
+    const slotEnd = endBoundary && endBoundary < firstBookingStart ? endBoundary : firstBookingStart;
+    const duration = Math.floor((slotEnd - startBoundary) / (1000 * 60));
+    if (duration >= 30) {
+      slots.push({
+        start: startBoundary,
+        end: slotEnd,
+        duration: `${duration} minutes`
+      });
+    }
+  }
 
-  for (const booking of activeBookings) {
-    const bookingStart = new Date(booking.startTime);
-    const bookingEnd = new Date(booking.endTime);
+  // Check for slots between bookings
+  for (let i = 0; i < activeBookings.length - 1; i++) {
+    const currentEnd = new Date(activeBookings[i].endTime);
+    const nextStart = new Date(activeBookings[i + 1].startTime);
+    
+    if (nextStart > currentEnd) {
+      const slotStart = currentEnd > startBoundary ? currentEnd : startBoundary;
+      const slotEnd = endBoundary && endBoundary < nextStart ? endBoundary : nextStart;
+      
+      if (slotEnd > slotStart) {
+        const duration = Math.floor((slotEnd - slotStart) / (1000 * 60));
+        if (duration >= 30) {
+          slots.push({
+            start: slotStart,
+            end: slotEnd,
+            duration: `${duration} minutes`
+          });
+        }
+      }
+    }
+  }
 
-    // Check if there's a gap before this booking
-    if (currentTime < bookingStart) {
-      const duration = Math.floor((bookingStart - currentTime) / (1000 * 60)); // in minutes
+  // Check for slot after last booking
+  const lastBookingEnd = new Date(activeBookings[activeBookings.length - 1].endTime);
+  if (!endBoundary || lastBookingEnd < endBoundary) {
+    const slotStart = lastBookingEnd > startBoundary ? lastBookingEnd : startBoundary;
+    if (endBoundary) {
+      const duration = Math.floor((endBoundary - slotStart) / (1000 * 60));
       if (duration >= 30) {
         slots.push({
-          start: currentTime,
-          end: bookingStart,
+          start: slotStart,
+          end: endBoundary,
           duration: `${duration} minutes`
         });
       }
-    }
-
-    // Update current time to the end of this booking
-    if (bookingEnd > currentTime) {
-      currentTime = bookingEnd;
-    }
-  }
-
-  // Check if there's time after the last booking
-  if (currentTime < endBoundary) {
-    const duration = Math.floor((endBoundary - currentTime) / (1000 * 60));
-    if (duration >= 30 || !queryEnd) {
+    } else {
       slots.push({
-        start: currentTime,
-        end: queryEnd ? endBoundary : null,
-        duration: queryEnd ? `${duration} minutes` : 'Infinity'
+        start: slotStart,
+        end: endBoundary,
+        duration: 'Infinity'
       });
     }
   }
@@ -73,15 +102,25 @@ exports.getSeats = async (req, res) => {
 
     const seats = await Seat.find({ location });
 
-    // If time range is provided, check availability
     if (startTime && endTime) {
       const start = new Date(startTime);
       const end = new Date(endTime);
 
       const seatsWithAvailability = seats.map(seat => {
-        // Check if any active booking (not on break) overlaps with requested time
-        const hasConflict = seat.bookings.some(booking => {
-          if (booking.status === 'on-break') return false;
+        // Check for active bookings that conflict
+        const hasActiveConflict = seat.bookings.some(booking => {
+          if (booking.status !== 'active') return false;
+          return timeSlotsOverlap(
+            new Date(booking.startTime),
+            new Date(booking.endTime),
+            start,
+            end
+          );
+        });
+
+        // Check for on-break bookings (limited availability)
+        const hasBreakConflict = seat.bookings.some(booking => {
+          if (booking.status !== 'on-break') return false;
           return timeSlotsOverlap(
             new Date(booking.startTime),
             new Date(booking.endTime),
@@ -92,9 +131,18 @@ exports.getSeats = async (req, res) => {
 
         const availableSlots = getAvailableTimeSlots(seat.bookings, start, end);
 
+        // Determine seat status
+        let status = 'available';
+        if (hasActiveConflict) {
+          status = 'booked';
+        } else if (hasBreakConflict) {
+          status = 'limited'; // Yellow - break time, limited availability
+        }
+
         return {
           ...seat.toObject(),
-          isAvailable: !hasConflict,
+          isAvailable: !hasActiveConflict,
+          status,
           availableSlots
         };
       });
@@ -102,10 +150,10 @@ exports.getSeats = async (req, res) => {
       return res.json(seatsWithAvailability);
     }
 
-    // Without time filter, just return seats with availability info
     const seatsWithSlots = seats.map(seat => ({
       ...seat.toObject(),
-      availableSlots: getAvailableTimeSlots(seat.bookings, null, null)
+      availableSlots: getAvailableTimeSlots(seat.bookings, null, null),
+      status: 'available'
     }));
 
     res.json(seatsWithSlots);
@@ -122,7 +170,6 @@ exports.bookSeat = async (req, res) => {
     const { seatId, startTime, endTime } = req.body;
     const userId = req.user.id;
 
-    // Validate input
     if (!seatId || !startTime || !endTime) {
       return res.status(400).json({ message: 'Please provide seat, start time, and end time' });
     }
@@ -130,7 +177,6 @@ exports.bookSeat = async (req, res) => {
     const start = new Date(startTime);
     const end = new Date(endTime);
 
-    // Validate time range
     if (start >= end) {
       return res.status(400).json({ message: 'End time must be after start time' });
     }
@@ -139,20 +185,18 @@ exports.bookSeat = async (req, res) => {
       return res.status(400).json({ message: 'Cannot book for past time' });
     }
 
-    // Check minimum 30 minutes booking
     const durationMinutes = (end - start) / (1000 * 60);
     if (durationMinutes < 30) {
       return res.status(400).json({ message: 'Minimum booking duration is 30 minutes' });
     }
 
-    // Find the seat
     const seat = await Seat.findById(seatId);
     
     if (!seat) {
       return res.status(404).json({ message: 'Seat not found' });
     }
 
-    // Check if the time slot is available (ignoring on-break bookings)
+    // Check for conflicts with active bookings (not on-break)
     const hasConflict = seat.bookings.some(booking => {
       if (booking.status === 'on-break') return false;
       return timeSlotsOverlap(
@@ -165,6 +209,29 @@ exports.bookSeat = async (req, res) => {
 
     if (hasConflict) {
       return res.status(400).json({ message: 'This seat is already booked for the selected time slot' });
+    }
+
+    // Check if trying to book during someone's break
+    const breakBookings = seat.bookings.filter(booking => 
+      booking.status === 'on-break' &&
+      timeSlotsOverlap(
+        new Date(booking.startTime),
+        new Date(booking.endTime),
+        start,
+        end
+      )
+    );
+
+    if (breakBookings.length > 0) {
+      // User can only book if their time is WITHIN the break period
+      const breakStart = new Date(breakBookings[0].startTime);
+      const breakEnd = new Date(breakBookings[0].endTime);
+      
+      if (start < breakStart || end > breakEnd) {
+        return res.status(400).json({ 
+          message: `This seat has limited availability (on-break). You can only book from ${breakStart.toLocaleString()} to ${breakEnd.toLocaleString()}`
+        });
+      }
     }
 
     // Add booking to seat
@@ -219,7 +286,6 @@ exports.putOnBreak = async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Check if the booking belongs to the current user
     if (booking.user.toString() !== userId) {
       return res.status(403).json({ message: 'You can only manage your own bookings' });
     }
@@ -233,12 +299,10 @@ exports.putOnBreak = async (req, res) => {
       return res.status(400).json({ message: 'Break time must be within your booking period' });
     }
 
-    // Validate break is in the future or current
     if (end < now) {
       return res.status(400).json({ message: 'Cannot set break for past time' });
     }
 
-    // Check minimum 30 minutes break
     const breakDuration = (end - start) / (1000 * 60);
     if (breakDuration < 30) {
       return res.status(400).json({ message: 'Break duration must be at least 30 minutes' });
@@ -308,16 +372,14 @@ exports.cancelBooking = async (req, res) => {
       return res.status(404).json({ message: 'Booking not found' });
     }
 
-    // Check if the booking belongs to the current user
     if (booking.user.toString() !== userId) {
       return res.status(403).json({ message: 'You can only cancel your own booking' });
     }
 
-    // Update booking status
     booking.status = 'cancelled';
     await booking.save();
 
-    // Remove booking from seat
+    // Remove booking from seat (both active and on-break bookings)
     const seat = await Seat.findOne({
       seatNumber: booking.seatNumber,
       location: booking.location
@@ -327,8 +389,7 @@ exports.cancelBooking = async (req, res) => {
       seat.bookings = seat.bookings.filter(b => 
         !(b.user.toString() === userId && 
           b.startTime.getTime() === booking.startTime.getTime() &&
-          b.endTime.getTime() === booking.endTime.getTime() &&
-          b.status !== 'on-break')
+          b.endTime.getTime() === booking.endTime.getTime())
       );
       await seat.save();
     }
@@ -397,7 +458,7 @@ exports.getSeatDetails = async (req, res) => {
     res.json({
       seat,
       availableSlots,
-      currentBookings: seat.bookings.filter(b => b.status === 'active')
+      currentBookings: seat.bookings.filter(b => new Date(b.endTime) > new Date())
     });
   } catch (error) {
     res.status(500).json({ message: 'Server error', error: error.message });
