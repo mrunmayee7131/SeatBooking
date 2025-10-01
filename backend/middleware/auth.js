@@ -1,29 +1,63 @@
 const jwt = require('jsonwebtoken');
-const User = require('../models/User');
 
-const protect = async (req, res, next) => {
-  let token;
+/**
+ * Middleware to authenticate JWT token
+ */
+const authenticateToken = (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
-  if (req.headers.authorization && req.headers.authorization.startsWith('Bearer')) {
-    try {
-      // Get token from header
-      token = req.headers.authorization.split(' ')[1];
-
-      // Verify token
-      const decoded = jwt.verify(token, process.env.JWT_SECRET);
-
-      // Get user from token
-      req.user = await User.findById(decoded.id).select('-password');
-
-      next();
-    } catch (error) {
-      res.status(401).json({ message: 'Not authorized' });
+    if (!token) {
+      return res.status(401).json({ 
+        message: 'Access token required' 
+      });
     }
-  }
 
-  if (!token) {
-    res.status(401).json({ message: 'Not authorized, no token' });
+    jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, decoded) => {
+      if (err) {
+        return res.status(403).json({ 
+          message: 'Invalid or expired token' 
+        });
+      }
+
+      req.userId = decoded.userId;
+      req.userEmail = decoded.email;
+      next();
+    });
+  } catch (error) {
+    console.error('Authentication error:', error);
+    res.status(500).json({ 
+      message: 'Authentication error' 
+    });
   }
 };
 
-module.exports = { protect };
+/**
+ * Optional authentication - sets user info if token exists but doesn't require it
+ */
+const optionalAuth = (req, res, next) => {
+  try {
+    const authHeader = req.headers['authorization'];
+    const token = authHeader && authHeader.split(' ')[1];
+
+    if (!token) {
+      return next();
+    }
+
+    jwt.verify(token, process.env.JWT_SECRET || 'your-secret-key', (err, decoded) => {
+      if (!err) {
+        req.userId = decoded.userId;
+        req.userEmail = decoded.email;
+      }
+      next();
+    });
+  } catch (error) {
+    next();
+  }
+};
+
+module.exports = {
+  authenticateToken,
+  optionalAuth
+};

@@ -6,56 +6,50 @@ const bookingSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
-  userName: {
-    type: String,
+  seat: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Seat',
     required: true
   },
-  userEmail: {
-    type: String,
+  date: {
+    type: Date,
     required: true
-  },
-  seatNumber: {
-    type: Number,
-    required: true
-  },
-  location: {
-    type: String,
-    required: true,
-    enum: ['Main Library', 'Reading Hall 1', 'Reading Hall 2']
   },
   startTime: {
-    type: Date,
+    type: String,
     required: true
   },
   endTime: {
-    type: Date,
+    type: String,
     required: true
   },
   status: {
     type: String,
-    enum: ['active', 'completed', 'cancelled', 'on-break'],
-    default: 'active'
+    enum: ['pending', 'confirmed', 'cancelled', 'completed'],
+    default: 'pending'
   },
-  breaks: [{
-    breakStart: {
-      type: Date,
-      required: true
-    },
-    breakEnd: {
-      type: Date,
-      required: true
-    },
-    createdAt: {
-      type: Date,
-      default: Date.now
-    }
-  }],
-  bookedAt: {
-    type: Date,
-    default: Date.now
+  attendanceConfirmed: {
+    type: Boolean,
+    default: false
+  },
+  attendanceConfirmedAt: {
+    type: Date
+  },
+  cancellationReason: {
+    type: String
+  },
+  autoCheckScheduled: {
+    type: Boolean,
+    default: false
   }
 }, {
   timestamps: true
 });
+
+// Index for efficient queries
+bookingSchema.index({ user: 1, date: 1 });
+bookingSchema.index({ seat: 1, date: 1 });
+bookingSchema.index({ status: 1 });
+bookingSchema.index({ attendanceConfirmed: 1, startTime: 1 });
 
 module.exports = mongoose.model('Booking', bookingSchema);

@@ -2,51 +2,44 @@ const mongoose = require('mongoose');
 
 const seatSchema = new mongoose.Schema({
   seatNumber: {
-    type: Number,
-    required: true
-  },
-  location: {
     type: String,
     required: true,
-    enum: ['Main Library', 'Reading Hall 1', 'Reading Hall 2']
+    unique: true,
+    trim: true
   },
-  bookings: [{
-    user: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'User',
-      required: true
-    },
-    userName: {
-      type: String,
-      required: true
-    },
-    userEmail: {
-      type: String,
-      required: true
-    },
-    startTime: {
-      type: Date,
-      required: true
-    },
-    endTime: {
-      type: Date,
-      required: true
-    },
-    bookedAt: {
-      type: Date,
-      default: Date.now
-    },
-    status: {
-      type: String,
-      enum: ['active', 'on-break'],
-      default: 'active'
-    }
-  }]
+  floor: {
+    type: Number,
+    required: true,
+    min: 1
+  },
+  section: {
+    type: String,
+    required: true,
+    trim: true
+  },
+  status: {
+    type: String,
+    enum: ['available', 'occupied', 'maintenance'],
+    default: 'available'
+  },
+  amenities: {
+    type: [String],
+    default: []
+  },
+  hasCharging: {
+    type: Boolean,
+    default: false
+  },
+  hasLamp: {
+    type: Boolean,
+    default: false
+  }
 }, {
   timestamps: true
 });
 
-// Compound index to ensure unique seat numbers per location
-seatSchema.index({ seatNumber: 1, location: 1 }, { unique: true });
+// Index for efficient queries
+seatSchema.index({ status: 1 });
+seatSchema.index({ floor: 1, section: 1 });
 
 module.exports = mongoose.model('Seat', seatSchema);
