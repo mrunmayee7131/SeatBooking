@@ -34,11 +34,16 @@ router.post('/book', authenticateToken, async (req, res) => {
 
     // Check for overlapping bookings
     const bookingDate = new Date(date);
+    const dayStart = new Date(bookingDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(bookingDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
     const existingBooking = await Booking.findOne({
       seat: seatId,
       date: {
-        $gte: new Date(bookingDate.setHours(0, 0, 0, 0)),
-        $lt: new Date(bookingDate.setHours(23, 59, 59, 999))
+        $gte: dayStart,
+        $lt: dayEnd
       },
       status: { $in: ['pending', 'confirmed'] },
       $or: [
@@ -67,9 +72,12 @@ router.post('/book', authenticateToken, async (req, res) => {
 
     await booking.save();
 
-    // Update seat status
-    seat.status = 'occupied';
-    await seat.save();
+    // Update seat status using findByIdAndUpdate
+    await Seat.findByIdAndUpdate(
+      seatId,
+      { $set: { status: 'occupied' } },
+      { runValidators: false }
+    );
 
     // Schedule attendance check (20 minutes after start time)
     const scheduled = scheduleAttendanceCheck(booking);
@@ -78,16 +86,19 @@ router.post('/book', authenticateToken, async (req, res) => {
       await booking.save();
     }
 
+    const populatedBooking = await Booking.findById(booking._id).populate('seat');
+
     res.status(201).json({
       message: 'Booking created successfully. Please reach your seat within 20 minutes.',
-      booking: await Booking.findById(booking._id).populate('seat'),
+      booking: populatedBooking,
       requiresAttendance: true,
       attendanceDeadline: '20 minutes from start time'
     });
   } catch (error) {
     console.error('Booking error:', error);
     res.status(500).json({ 
-      message: 'Error creating booking' 
+      message: 'Error creating booking',
+      error: error.message 
     });
   }
 });
@@ -107,7 +118,17 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
     // Update user location first
     const user = await User.findById(req.userId);
     if (user) {
-      await user.updateLocation(latitude, longitude);
+      await User.findByIdAndUpdate(
+        req.userId,
+        {
+          $set: {
+            'lastKnownLocation.latitude': parseFloat(latitude),
+            'lastKnownLocation.longitude': parseFloat(longitude),
+            'lastKnownLocation.timestamp': new Date()
+          }
+        },
+        { runValidators: false }
+      );
     }
 
     // Check attendance
@@ -128,7 +149,8 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
   } catch (error) {
     console.error('Attendance confirmation error:', error);
     res.status(500).json({ 
-      message: 'Error confirming attendance' 
+      message: 'Error confirming attendance',
+      error: error.message 
     });
   }
 });
@@ -205,11 +227,11 @@ router.delete('/:bookingId', authenticateToken, async (req, res) => {
     await booking.save();
 
     // Free up the seat
-    const seat = await Seat.findById(booking.seat);
-    if (seat) {
-      seat.status = 'available';
-      await seat.save();
-    }
+    await Seat.findByIdAndUpdate(
+      booking.seat,
+      { $set: { status: 'available' } },
+      { runValidators: false }
+    );
 
     res.json({ 
       message: 'Booking cancelled successfully' 
