@@ -20,7 +20,7 @@ const BookSeat = () => {
 
   useEffect(() => {
     fetchSeats();
-  }, [selectedLocation, formData.date, formData.startTime, formData.endTime]);
+  }, []);
 
   const fetchSeats = async () => {
     try {
@@ -39,12 +39,6 @@ const BookSeat = () => {
   };
 
   const isSeatAvailable = (seat) => {
-    if (!formData.date || !formData.startTime || !formData.endTime) {
-      return true; // Show all seats if time not selected
-    }
-
-    // Check if seat has overlapping bookings
-    // This is a simplified check - the backend will do the actual validation
     return seat.status === 'available';
   };
 
@@ -94,232 +88,271 @@ const BookSeat = () => {
     }
   };
 
-  const renderSeatLayout = () => {
-    const locationSeats = seats.filter(seat => seat.location === selectedLocation);
-    
-    if (selectedLocation === 'Main Library') {
-      return renderMainLibraryLayout(locationSeats);
-    } else if (selectedLocation === 'Reading Hall 1') {
-      return renderReadingHall1Layout(locationSeats);
-    } else if (selectedLocation === 'Reading Hall 2') {
-      return renderReadingHall2Layout(locationSeats);
-    }
+  const getSeatsByLocation = () => {
+    return seats.filter(seat => seat.location === selectedLocation);
   };
 
-  const renderMainLibraryLayout = (locationSeats) => {
-    const seatsByNumber = {};
+  const renderReadingHall1 = () => {
+    const locationSeats = getSeatsByLocation();
+    const seatMap = {};
     locationSeats.forEach(seat => {
-      seatsByNumber[seat.seatNumber] = seat;
+      seatMap[seat.seatNumber] = seat;
     });
 
     return (
-      <div className="main-library-layout">
-        <div className="library-entry">ENTRY</div>
+      <div className="rh1-container">
+        <div className="rh1-entry">ENTRY</div>
         
-        {/* Left section - 2 columns */}
-        <div className="library-section library-left">
-          {[0, 1].map(col => (
-            <div key={col} className="library-column">
-              {[...Array(8)].map((_, row) => {
-                const seatNum = col * 8 + row + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
-        </div>
+        <div className="rh1-layout">
+          {/* Main grid area - 10 rows x 6 columns */}
+          <div className="rh1-main-grid">
+            {[...Array(10)].map((_, row) => (
+              <div key={row} className="rh1-row">
+                {[...Array(6)].map((_, col) => {
+                  const seatNum = row * 6 + col + 1;
+                  const seat = seatMap[seatNum];
+                  if (!seat) return <div key={col} className="seat-placeholder"></div>;
+                  
+                  return (
+                    <div
+                      key={seat._id}
+                      className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                      onClick={() => handleSeatClick(seat)}
+                      title={`Seat ${seat.seatNumber}`}
+                    >
+                      {seat.seatNumber}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
 
-        {/* Middle gap */}
-        <div className="library-gap"></div>
-
-        {/* Right section - 2 columns */}
-        <div className="library-section library-right">
-          {[2, 3].map(col => (
-            <div key={col} className="library-column">
-              {[...Array(8)].map((_, row) => {
-                const seatNum = col * 8 + row + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
-        </div>
-
-        {/* Bottom section - 6 seats in 2 rows */}
-        <div className="library-bottom">
-          {[0, 1].map(row => (
-            <div key={row} className="library-bottom-row">
-              {[...Array(3)].map((_, col) => {
-                const seatNum = 33 + row * 3 + col;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
+          {/* Round tables on the right */}
+          <div className="rh1-round-tables">
+            {[0, 1, 2].map(tableIdx => (
+              <div key={tableIdx} className="round-table-container">
+                <div className="round-table-circle">
+                  {[0, 1, 2, 3, 4].map(seatIdx => {
+                    const seatNum = 61 + tableIdx * 5 + seatIdx;
+                    const seat = seatMap[seatNum];
+                    if (!seat) return null;
+                    
+                    const angle = (seatIdx * 72 - 90) * (Math.PI / 180);
+                    const radius = 70;
+                    const x = 50 + radius * Math.cos(angle);
+                    const y = 50 + radius * Math.sin(angle);
+                    
+                    return (
+                      <div
+                        key={seat._id}
+                        className={`round-seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                        style={{
+                          left: `${x}%`,
+                          top: `${y}%`
+                        }}
+                        onClick={() => handleSeatClick(seat)}
+                        title={`Seat ${seat.seatNumber}`}
+                      >
+                        {seat.seatNumber}
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     );
   };
 
-  const renderReadingHall1Layout = (locationSeats) => {
-    const seatsByNumber = {};
+  const renderReadingHall2 = () => {
+    const locationSeats = getSeatsByLocation();
+    const seatMap = {};
     locationSeats.forEach(seat => {
-      seatsByNumber[seat.seatNumber] = seat;
+      seatMap[seat.seatNumber] = seat;
     });
 
     return (
-      <div className="reading-hall-layout">
-        <div className="hall-entry">ENTRY</div>
-        
-        {/* Main seating area - 10 rows x 6 columns */}
-        <div className="hall-main-area">
-          {[...Array(10)].map((_, row) => (
-            <div key={row} className="hall-row">
-              {[...Array(6)].map((_, col) => {
-                const seatNum = row * 6 + col + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
-        </div>
+      <div className="rh2-container">
+        <div className="rh2-layout">
+          {/* Left section - 8 rows x 6 columns */}
+          <div className="rh2-left">
+            {[...Array(8)].map((_, row) => (
+              <div key={row} className="rh2-row">
+                {[...Array(6)].map((_, col) => {
+                  const seatNum = row * 6 + col + 1;
+                  const seat = seatMap[seatNum];
+                  if (!seat) return <div key={col} className="seat-placeholder"></div>;
+                  
+                  return (
+                    <div
+                      key={seat._id}
+                      className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                      onClick={() => handleSeatClick(seat)}
+                      title={`Seat ${seat.seatNumber}`}
+                    >
+                      {seat.seatNumber}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
 
-        {/* Round tables on the right */}
-        <div className="hall-round-tables">
-          {[1, 2, 3].map(tableNum => (
-            <div key={tableNum} className="round-table">
-              {[...Array(5)].map((_, pos) => {
-                const seatNum = 60 + (tableNum - 1) * 5 + pos + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat round ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                    style={{
-                      position: 'absolute',
-                      left: `${50 + 40 * Math.cos((pos * 2 * Math.PI) / 5 - Math.PI / 2)}%`,
-                      top: `${50 + 40 * Math.sin((pos * 2 * Math.PI) / 5 - Math.PI / 2)}%`,
-                      transform: 'translate(-50%, -50%)'
-                    }}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : null;
-              })}
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  };
-
-  const renderReadingHall2Layout = (locationSeats) => {
-    const seatsByNumber = {};
-    locationSeats.forEach(seat => {
-      seatsByNumber[seat.seatNumber] = seat;
-    });
-
-    return (
-      <div className="reading-hall-2-layout">
-        {/* Left section - 8 rows x 6 columns */}
-        <div className="hall2-left-section">
-          {[...Array(8)].map((_, row) => (
-            <div key={row} className="hall-row">
-              {[...Array(6)].map((_, col) => {
-                const seatNum = row * 6 + col + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
-        </div>
-
-        {/* Right section - 8 rows x 2 columns */}
-        <div className="hall2-right-section">
-          {[...Array(8)].map((_, row) => (
-            <div key={row} className="hall-row">
-              {[...Array(2)].map((_, col) => {
-                const seatNum = 48 + row * 2 + col + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
-                  <div
-                    key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
-                    onClick={() => handleSeatClick(seat)}
-                  >
-                    {seat.seatNumber}
-                  </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
-              })}
-            </div>
-          ))}
+          {/* Right section - 8 rows x 2 columns */}
+          <div className="rh2-right">
+            {[...Array(8)].map((_, row) => (
+              <div key={row} className="rh2-row">
+                {[...Array(2)].map((_, col) => {
+                  const seatNum = 49 + row * 2 + col;
+                  const seat = seatMap[seatNum];
+                  if (!seat) return <div key={col} className="seat-placeholder"></div>;
+                  
+                  return (
+                    <div
+                      key={seat._id}
+                      className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                      onClick={() => handleSeatClick(seat)}
+                      title={`Seat ${seat.seatNumber}`}
+                    >
+                      {seat.seatNumber}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
         </div>
 
         {/* Bottom section - 2 rows x 6 columns */}
-        <div className="hall2-bottom-section">
+        <div className="rh2-bottom">
           {[...Array(2)].map((_, row) => (
-            <div key={row} className="hall-row">
+            <div key={row} className="rh2-row">
               {[...Array(6)].map((_, col) => {
-                const seatNum = 64 + row * 6 + col + 1;
-                const seat = seatsByNumber[seatNum];
-                return seat ? (
+                const seatNum = 65 + row * 6 + col;
+                const seat = seatMap[seatNum];
+                if (!seat) return <div key={col} className="seat-placeholder"></div>;
+                
+                return (
                   <div
                     key={seat._id}
-                    className={`seat ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                    className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
                     onClick={() => handleSeatClick(seat)}
+                    title={`Seat ${seat.seatNumber}`}
                   >
                     {seat.seatNumber}
                   </div>
-                ) : <div key={seatNum} className="seat empty"></div>;
+                );
               })}
             </div>
           ))}
         </div>
 
-        <div className="hall2-entry">ENTRY</div>
+        <div className="rh2-entry">ENTRY</div>
       </div>
     );
+  };
+
+  const renderMainLibrary = () => {
+    const locationSeats = getSeatsByLocation();
+    const seatMap = {};
+    locationSeats.forEach(seat => {
+      seatMap[seat.seatNumber] = seat;
+    });
+
+    return (
+      <div className="ml-container">
+        <div className="ml-entry">ENTRY</div>
+        
+        <div className="ml-layout">
+          {/* Left section - 2 columns x 8 rows */}
+          <div className="ml-left">
+            {[0, 1].map(colIdx => (
+              <div key={colIdx} className="ml-column">
+                {[...Array(8)].map((_, row) => {
+                  const seatNum = colIdx + row * 2 + 1;
+                  const seat = seatMap[seatNum];
+                  if (!seat) return <div key={row} className="seat-placeholder"></div>;
+                  
+                  return (
+                    <div
+                      key={seat._id}
+                      className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                      onClick={() => handleSeatClick(seat)}
+                      title={`Seat ${seat.seatNumber}`}
+                    >
+                      {seat.seatNumber}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+
+          <div className="ml-spacer"></div>
+
+          {/* Right section - 2 columns x 8 rows */}
+          <div className="ml-right">
+            {[0, 1].map(colIdx => (
+              <div key={colIdx} className="ml-column">
+                {[...Array(8)].map((_, row) => {
+                  const seatNum = 17 + colIdx + row * 2;
+                  const seat = seatMap[seatNum];
+                  if (!seat) return <div key={row} className="seat-placeholder"></div>;
+                  
+                  return (
+                    <div
+                      key={seat._id}
+                      className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                      onClick={() => handleSeatClick(seat)}
+                      title={`Seat ${seat.seatNumber}`}
+                    >
+                      {seat.seatNumber}
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Bottom section - 2 rows x 6 columns */}
+        <div className="ml-bottom">
+          {[...Array(2)].map((_, row) => (
+            <div key={row} className="ml-row">
+              {[...Array(6)].map((_, col) => {
+                const seatNum = 33 + row * 6 + col;
+                const seat = seatMap[seatNum];
+                if (!seat) return <div key={col} className="seat-placeholder"></div>;
+                
+                return (
+                  <div
+                    key={seat._id}
+                    className={`seat-item ${isSeatAvailable(seat) ? 'available' : 'occupied'} ${selectedSeat?._id === seat._id ? 'selected' : ''}`}
+                    onClick={() => handleSeatClick(seat)}
+                    title={`Seat ${seat.seatNumber}`}
+                  >
+                    {seat.seatNumber}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSeatLayout = () => {
+    if (selectedLocation === 'Reading Hall 1') {
+      return renderReadingHall1();
+    } else if (selectedLocation === 'Reading Hall 2') {
+      return renderReadingHall2();
+    } else if (selectedLocation === 'Main Library') {
+      return renderMainLibrary();
+    }
   };
 
   return (
@@ -332,9 +365,9 @@ const BookSeat = () => {
 
       {error && <div className="error-message">{error}</div>}
 
-      {/* Controls Section */}
+      {/* Controls */}
       <div className="booking-controls">
-        <div className="location-selector">
+        <div className="control-group">
           <label>Select Location</label>
           <select
             value={selectedLocation}
@@ -349,71 +382,78 @@ const BookSeat = () => {
           </select>
         </div>
 
-        <div className="time-selector">
-          <div className="time-input">
-            <label>Date</label>
-            <input
-              type="date"
-              name="date"
-              value={formData.date}
-              onChange={handleChange}
-              required
-              min={new Date().toISOString().split('T')[0]}
-            />
-          </div>
+        <div className="control-group">
+          <label>Date</label>
+          <input
+            type="date"
+            name="date"
+            value={formData.date}
+            onChange={handleChange}
+            required
+            min={new Date().toISOString().split('T')[0]}
+          />
+        </div>
 
-          <div className="time-input">
-            <label>Start Time</label>
-            <input
-              type="time"
-              name="startTime"
-              value={formData.startTime}
-              onChange={handleChange}
-              required
-            />
-          </div>
+        <div className="control-group">
+          <label>Start Time</label>
+          <input
+            type="time"
+            name="startTime"
+            value={formData.startTime}
+            onChange={handleChange}
+            required
+          />
+        </div>
 
-          <div className="time-input">
-            <label>End Time</label>
-            <input
-              type="time"
-              name="endTime"
-              value={formData.endTime}
-              onChange={handleChange}
-              required
-            />
-          </div>
+        <div className="control-group">
+          <label>End Time</label>
+          <input
+            type="time"
+            name="endTime"
+            value={formData.endTime}
+            onChange={handleChange}
+            required
+          />
         </div>
       </div>
 
-      {/* Seat Legend */}
-      <div className="seats-info">
-        <p><span className="seat-indicator available"></span> Available</p>
-        <p><span className="seat-indicator booked"></span> Occupied</p>
-        <p><span className="seat-indicator selected"></span> Selected</p>
-        <p className="info-text">⚠️ Select date and time first, then click on a seat</p>
+      {/* Legend */}
+      <div className="seat-legend">
+        <div className="legend-item">
+          <div className="legend-box available"></div>
+          <span>Available</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-box occupied"></div>
+          <span>Occupied</span>
+        </div>
+        <div className="legend-item">
+          <div className="legend-box selected"></div>
+          <span>Selected</span>
+        </div>
+        <p className="legend-warning">⚠️ Select date and time first, then click on a seat</p>
       </div>
 
       {/* Seat Layout */}
-      <div className="seat-layout-container">
+      <div className="seat-layout-wrapper">
         {renderSeatLayout()}
       </div>
 
-      {/* Confirmation Popup */}
+      {/* Confirmation Modal */}
       {showConfirmation && selectedSeat && (
-        <div className="confirmation-overlay" onClick={() => setShowConfirmation(false)}>
-          <div className="confirmation-popup" onClick={(e) => e.stopPropagation()}>
+        <div className="modal-overlay" onClick={() => setShowConfirmation(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()}>
             <h3>Confirm Booking</h3>
-            <div className="confirmation-details">
+            <div className="modal-details">
               <p><strong>Location:</strong> {selectedLocation}</p>
               <p><strong>Seat Number:</strong> {selectedSeat.seatNumber}</p>
               <p><strong>Date:</strong> {new Date(formData.date).toLocaleDateString()}</p>
               <p><strong>Time:</strong> {formData.startTime} - {formData.endTime}</p>
             </div>
-            <div className="confirmation-warning">
+            <div className="modal-warning">
               ⚠️ Remember: You must confirm your attendance within 20 minutes of the start time by being within 100 meters of the library.
             </div>
-            <div className="confirmation-buttons">
+            <div className="modal-actions">
               <button 
                 onClick={handleConfirmBooking} 
                 disabled={loading}
@@ -426,7 +466,7 @@ const BookSeat = () => {
                   setShowConfirmation(false);
                   setSelectedSeat(null);
                 }}
-                className="btn-cancel"
+                className="btn-cancel-modal"
               >
                 Cancel
               </button>
