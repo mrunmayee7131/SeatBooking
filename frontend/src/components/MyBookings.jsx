@@ -8,9 +8,10 @@ const MyBookings = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedBooking, setSelectedBooking] = useState(null);
-  const [filter, setFilter] = useState('all');
+  const [filter, setFilter] = useState('all'); // all, pending, confirmed, cancelled
 
-  useLocationTracker(60000);
+  // Track location automatically
+  useLocationTracker(60000); // Update every minute
 
   useEffect(() => {
     fetchBookings();
@@ -60,77 +61,37 @@ const MyBookings = () => {
     setSelectedBooking(null);
   };
 
-  const getBookingStatus = (booking) => {
-    const now = new Date();
-    const bookingDate = new Date(booking.date);
-    const [startHours, startMinutes] = booking.startTime.split(':');
-    const [endHours, endMinutes] = booking.endTime.split(':');
-    
-    const bookingStart = new Date(bookingDate);
-    bookingStart.setHours(parseInt(startHours), parseInt(startMinutes), 0, 0);
-    
-    const bookingEnd = new Date(bookingDate);
-    bookingEnd.setHours(parseInt(endHours), parseInt(endMinutes), 0, 0);
-    
-    const confirmationDeadline = new Date(bookingStart.getTime() + 20 * 60 * 1000);
-
-    // Cancelled
-    if (booking.status === 'cancelled') {
-      return 'cancelled';
-    }
-
-    // Expired (booking end time has passed)
-    if (now > bookingEnd) {
-      return 'expired';
-    }
-
-    // Active (attendance confirmed and currently within booking time)
-    if (booking.attendanceConfirmed && now >= bookingStart && now <= bookingEnd) {
-      return 'active';
-    }
-
-    // Confirmed but not started yet or already ended
-    if (booking.attendanceConfirmed) {
-      return now < bookingStart ? 'confirmed' : 'expired';
-    }
-
-    // Pending (waiting for attendance confirmation)
-    if (now < confirmationDeadline) {
-      return 'pending';
-    }
-
-    // Should be cancelled if past deadline and not confirmed
-    return 'cancelled';
-  };
-
   const getStatusBadge = (booking) => {
-    const status = getBookingStatus(booking);
-
-    const badges = {
-      pending: <span style={styles.badgePending}>⏳ Pending</span>,
-      cancelled: <span style={styles.badgeCancelled}>❌ Cancelled</span>,
-      active: <span style={styles.badgeActive}>✅ Active</span>,
-      expired: <span style={styles.badgeExpired}>⌛ Expired</span>,
-      confirmed: <span style={styles.badgeConfirmed}>✓ Confirmed</span>
-    };
-
-    return badges[status] || badges.pending;
+    if (booking.status === 'cancelled') {
+      return <span style={styles.badgeCancelled}>Cancelled</span>;
+    }
+    if (booking.attendanceConfirmed) {
+      return <span style={styles.badgeConfirmed}>Confirmed</span>;
+    }
+    return <span style={styles.badgePending}>Pending Attendance</span>;
   };
 
   const needsAttendance = (booking) => {
-    const status = getBookingStatus(booking);
-    return status === 'pending';
-  };
+    if (booking.status === 'cancelled' || booking.attendanceConfirmed) {
+      return false;
+    }
 
-  const canCancel = (booking) => {
-    const status = getBookingStatus(booking);
-    return status === 'pending' || (status === 'confirmed' && !booking.attendanceConfirmed);
+    const now = new Date();
+    const bookingDate = new Date(booking.date);
+    const [hours, minutes] = booking.startTime.split(':');
+    bookingDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+    const deadlineTime = new Date(bookingDate.getTime() + 20 * 60 * 1000);
+    
+    return now >= bookingDate && now <= deadlineTime;
   };
 
   const filteredBookings = bookings.filter(booking => {
     if (filter === 'all') return true;
-    const status = getBookingStatus(booking);
-    return status === filter;
+    if (filter === 'pending') return booking.status === 'pending' && !booking.attendanceConfirmed;
+    if (filter === 'confirmed') return booking.attendanceConfirmed;
+    if (filter === 'cancelled') return booking.status === 'cancelled';
+    return true;
   });
 
   if (loading) {
@@ -178,15 +139,6 @@ const MyBookings = () => {
           Pending
         </button>
         <button
-          onClick={() => setFilter('active')}
-          style={{
-            ...styles.filterButton,
-            ...(filter === 'active' ? styles.filterButtonActive : {})
-          }}
-        >
-          Active
-        </button>
-        <button
           onClick={() => setFilter('confirmed')}
           style={{
             ...styles.filterButton,
@@ -194,15 +146,6 @@ const MyBookings = () => {
           }}
         >
           Confirmed
-        </button>
-        <button
-          onClick={() => setFilter('expired')}
-          style={{
-            ...styles.filterButton,
-            ...(filter === 'expired' ? styles.filterButtonActive : {})
-          }}
-        >
-          Expired
         </button>
         <button
           onClick={() => setFilter('cancelled')}
@@ -230,7 +173,7 @@ const MyBookings = () => {
                   <h3 style={styles.seatNumber}>
                     Seat {booking.seat?.seatNumber}
                   </h3>
-                  <p style={styles.location}>{booking.seat?.location}</p>
+                  <p style={styles.floor}>Floor {booking.seat?.floor}</p>
                 </div>
                 {getStatusBadge(booking)}
               </div>
@@ -252,7 +195,7 @@ const MyBookings = () => {
                   <div style={styles.detailRow}>
                     <span style={styles.detailLabel}>✓ Confirmed At:</span>
                     <span style={styles.detailValue}>
-                      {new Date(booking.attendanceConfirmedAt).toLocaleString()}
+                      {new Date(booking.attendanceConfirmedAt).toLocaleTimeString()}
                     </span>
                   </div>
                 )}
@@ -275,7 +218,7 @@ const MyBookings = () => {
                     Confirm Attendance
                   </button>
                 )}
-                {canCancel(booking) && (
+                {booking.status !== 'cancelled' && !booking.attendanceConfirmed && (
                   <button
                     onClick={() => handleCancelBooking(booking._id)}
                     style={styles.cancelButton}
@@ -376,7 +319,7 @@ const styles = {
     color: '#333',
     margin: 0
   },
-  location: {
+  floor: {
     fontSize: '14px',
     color: '#666',
     margin: '4px 0 0 0'
@@ -384,94 +327,72 @@ const styles = {
   badgePending: {
     backgroundColor: '#fff3cd',
     color: '#856404',
-    padding: '6px 12px',
+    padding: '4px 12px',
     borderRadius: '12px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  badgeCancelled: {
-    backgroundColor: '#ffebee',
-    color: '#c62828',
-    padding: '6px 12px',
-    borderRadius: '12px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  badgeActive: {
-    backgroundColor: '#e8f5e9',
-    color: '#2e7d32',
-    padding: '6px 12px',
-    borderRadius: '12px',
-    fontSize: '13px',
-    fontWeight: '600'
-  },
-  badgeExpired: {
-    backgroundColor: '#f5f5f5',
-    color: '#757575',
-    padding: '6px 12px',
-    borderRadius: '12px',
-    fontSize: '13px',
+    fontSize: '12px',
     fontWeight: '600'
   },
   badgeConfirmed: {
-    backgroundColor: '#e3f2fd',
-    color: '#1565c0',
-    padding: '6px 12px',
+    backgroundColor: '#d4edda',
+    color: '#155724',
+    padding: '4px 12px',
     borderRadius: '12px',
-    fontSize: '13px',
+    fontSize: '12px',
+    fontWeight: '600'
+  },
+  badgeCancelled: {
+    backgroundColor: '#f8d7da',
+    color: '#721c24',
+    padding: '4px 12px',
+    borderRadius: '12px',
+    fontSize: '12px',
     fontWeight: '600'
   },
   bookingDetails: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
     marginBottom: '16px'
   },
   detailRow: {
     display: 'flex',
     justifyContent: 'space-between',
-    alignItems: 'center'
+    padding: '8px 0',
+    fontSize: '14px'
   },
   detailLabel: {
-    fontSize: '14px',
     color: '#666',
     fontWeight: '500'
   },
   detailValue: {
-    fontSize: '14px',
     color: '#333',
     fontWeight: '600'
   },
   bookingActions: {
     display: 'flex',
-    gap: '10px',
-    marginTop: '16px',
-    paddingTop: '16px',
-    borderTop: '1px solid #eee'
+    gap: '12px',
+    marginTop: '16px'
   },
   attendButton: {
     flex: 1,
-    padding: '10px 16px',
-    backgroundColor: '#4caf50',
+    backgroundColor: '#28a745',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    cursor: 'pointer',
-    fontWeight: '600',
+    padding: '10px 16px',
     fontSize: '14px',
-    transition: 'background 0.3s'
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s'
   },
   cancelButton: {
     flex: 1,
-    padding: '10px 16px',
-    backgroundColor: '#f44336',
+    backgroundColor: '#dc3545',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    cursor: 'pointer',
-    fontWeight: '600',
+    padding: '10px 16px',
     fontSize: '14px',
-    transition: 'background 0.3s'
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'background-color 0.2s'
   },
   backButton: {
     backgroundColor: '#6c757d',
@@ -479,9 +400,10 @@ const styles = {
     border: 'none',
     borderRadius: '8px',
     padding: '10px 20px',
+    fontSize: '14px',
+    fontWeight: '600',
     cursor: 'pointer',
-    marginBottom: '20px',
-    fontWeight: '600'
+    marginBottom: '20px'
   }
 };
 
