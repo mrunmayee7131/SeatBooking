@@ -25,7 +25,7 @@ const bookingSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'cancelled', 'completed'],
+    enum: ['pending', 'confirmed', 'cancelled', 'completed', 'expired'],
     default: 'pending'
   },
   attendanceConfirmed: {
@@ -41,6 +41,11 @@ const bookingSchema = new mongoose.Schema({
   autoCheckScheduled: {
     type: Boolean,
     default: false
+  },
+  deviceFingerprint: {
+    type: String,
+    required: true,
+    index: true
   }
 }, {
   timestamps: true
@@ -51,5 +56,6 @@ bookingSchema.index({ user: 1, date: 1 });
 bookingSchema.index({ seat: 1, date: 1 });
 bookingSchema.index({ status: 1 });
 bookingSchema.index({ attendanceConfirmed: 1, startTime: 1 });
+bookingSchema.index({ deviceFingerprint: 1, date: 1, status: 1 });
 
 module.exports = mongoose.model('Booking', bookingSchema);

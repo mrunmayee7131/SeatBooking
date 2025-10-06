@@ -4,6 +4,8 @@ const Seat = require('../models/Seat');
 const User = require('../models/User');
 const { authenticateToken } = require('../middleware/auth');
 const { checkAttendance, scheduleAttendanceCheck } = require('../services/attendanceChecker');
+const { generateDeviceFingerprint, hasValidFingerprint } = require('../utils/deviceFingerprint');
+const { validateBookingWindow, timeRangesOverlap } = require('../utils/timeValidation');
 
 const router = express.Router();
 
@@ -17,6 +19,22 @@ router.post('/book', authenticateToken, async (req, res) => {
         message: 'All fields are required' 
       });
     }
+
+    // Validate booking window (8 AM - 6 PM)
+    const windowValidation = validateBookingWindow(startTime, endTime);
+    if (!windowValidation.isValid) {
+      return res.status(400).json({ 
+        message: windowValidation.message 
+      });
+    }
+
+    // Generate device fingerprint
+    if (!hasValidFingerprint(req)) {
+      return res.status(400).json({ 
+        message: 'Unable to identify device. Please ensure cookies and headers are enabled.' 
+      });
+    }
+    const deviceFingerprint = generateDeviceFingerprint(req);
 
     // Check if seat exists and is available
     const seat = await Seat.findById(seatId);
@@ -32,13 +50,13 @@ router.post('/book', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check for overlapping bookings
     const bookingDate = new Date(date);
     const dayStart = new Date(bookingDate);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(bookingDate);
     dayEnd.setHours(23, 59, 59, 999);
 
+    // Check for overlapping bookings on the same seat
     const existingBooking = await Booking.findOne({
       seat: seatId,
       date: {
@@ -60,6 +78,35 @@ router.post('/book', authenticateToken, async (req, res) => {
       });
     }
 
+    // Check for overlapping bookings from the same device
+    const deviceBookings = await Booking.find({
+      deviceFingerprint: deviceFingerprint,
+      date: {
+        $gte: dayStart,
+        $lt: dayEnd
+      },
+      status: { $in: ['pending', 'confirmed'] }
+    }).populate('seat');
+
+    // Check if any existing booking from this device overlaps with the requested time
+    for (const existingDeviceBooking of deviceBookings) {
+      if (timeRangesOverlap(
+        existingDeviceBooking.startTime,
+        existingDeviceBooking.endTime,
+        startTime,
+        endTime
+      )) {
+        return res.status(400).json({ 
+          message: `You already have a booking from ${existingDeviceBooking.startTime} to ${existingDeviceBooking.endTime} on this date. Multiple overlapping bookings from the same device are not allowed.`,
+          existingBooking: {
+            startTime: existingDeviceBooking.startTime,
+            endTime: existingDeviceBooking.endTime,
+            seatNumber: existingDeviceBooking.seat.seatNumber
+          }
+        });
+      }
+    }
+
     // Create booking
     const booking = new Booking({
       user: req.userId,
@@ -67,7 +114,8 @@ router.post('/book', authenticateToken, async (req, res) => {
       date: bookingDate,
       startTime,
       endTime,
-      status: 'pending'
+      status: 'pending',
+      deviceFingerprint: deviceFingerprint
     });
 
     await booking.save();
