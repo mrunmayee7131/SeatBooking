@@ -3,7 +3,7 @@ const Booking = require('../models/Booking');
 const Seat = require('../models/Seat');
 const User = require('../models/User');
 const { authenticateToken } = require('../middleware/auth');
-const { checkAttendance, scheduleAttendanceCheck } = require('../services/attendanceChecker');
+const { checkAttendance, scheduleAttendanceCheck, checkAndCancelExpiredBookings } = require('../services/attendanceChecker');
 const { generateDeviceFingerprint, hasValidFingerprint } = require('../utils/deviceFingerprint');
 const { validateBookingWindow, timeRangesOverlap } = require('../utils/timeValidation');
 

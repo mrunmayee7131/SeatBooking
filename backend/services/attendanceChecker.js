@@ -101,6 +101,63 @@ async function autoCancelIfNotPresent(bookingId) {
 }
 
 /**
+ * Check and auto-cancel expired bookings (past 20-minute deadline)
+ * This is called when user views their bookings
+ * @param {string} userId - User ID
+ */
+async function checkAndCancelExpiredBookings(userId) {
+  try {
+    const now = new Date();
+    
+    // Find all pending bookings for the user that haven't confirmed attendance
+    const pendingBookings = await Booking.find({
+      user: userId,
+      status: 'pending',
+      attendanceConfirmed: false
+    }).populate('seat');
+
+    let cancelledCount = 0;
+
+    for (const booking of pendingBookings) {
+      const bookingDate = new Date(booking.date);
+      const [hours, minutes] = booking.startTime.split(':');
+      bookingDate.setHours(parseInt(hours), parseInt(minutes), 0, 0);
+
+      // Calculate deadline (20 minutes after start time)
+      const deadline = new Date(bookingDate.getTime() + 20 * 60 * 1000);
+
+      // If current time is past the deadline, cancel the booking
+      if (now > deadline) {
+        booking.status = 'cancelled';
+        booking.cancellationReason = 'User did not confirm attendance within 20 minutes of booking start time';
+        await booking.save();
+
+        // Free up the seat
+        if (booking.seat) {
+          await Seat.findByIdAndUpdate(
+            booking.seat._id,
+            { $set: { status: 'available' } },
+            { runValidators: false }
+          );
+        }
+
+        cancelledCount++;
+        console.log(`Auto-cancelled expired booking ${booking._id} for user ${userId}`);
+      }
+    }
+
+    if (cancelledCount > 0) {
+      console.log(`Total expired bookings cancelled: ${cancelledCount}`);
+    }
+
+    return cancelledCount;
+  } catch (error) {
+    console.error('Error checking expired bookings:', error);
+    return 0;
+  }
+}
+
+/**
  * Schedule attendance check for a booking
  * @param {Object} booking - Booking object
  */
@@ -124,6 +181,10 @@ function scheduleAttendanceCheck(booking) {
     return true;
   } else {
     console.log(`Booking ${booking._id} check time already passed`);
+    // If time has passed, check immediately
+    if (booking.status === 'pending' && !booking.attendanceConfirmed) {
+      autoCancelIfNotPresent(booking._id.toString());
+    }
     return false;
   }
 }
@@ -131,5 +192,6 @@ function scheduleAttendanceCheck(booking) {
 module.exports = {
   checkAttendance,
   autoCancelIfNotPresent,
-  scheduleAttendanceCheck
+  scheduleAttendanceCheck,
+  checkAndCancelExpiredBookings
 };
