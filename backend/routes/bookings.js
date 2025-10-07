@@ -96,12 +96,15 @@ router.post('/book', authenticateToken, async (req, res) => {
         startTime,
         endTime
       )) {
+        // Check if seat exists before accessing seatNumber
+        const seatNumber = existingDeviceBooking.seat ? existingDeviceBooking.seat.seatNumber : 'Unknown';
+        
         return res.status(400).json({ 
           message: `You already have a booking from ${existingDeviceBooking.startTime} to ${existingDeviceBooking.endTime} on this date. Multiple overlapping bookings from the same device are not allowed.`,
           existingBooking: {
             startTime: existingDeviceBooking.startTime,
             endTime: existingDeviceBooking.endTime,
-            seatNumber: existingDeviceBooking.seat.seatNumber
+            seatNumber: seatNumber
           }
         });
       }
@@ -206,6 +209,10 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
 // Get user bookings
 router.get('/my-bookings', authenticateToken, async (req, res) => {
   try {
+    // First, check and cancel any expired bookings
+    await checkAndCancelExpiredBookings(req.userId);
+    
+    // Then fetch all bookings
     const bookings = await Booking.find({ user: req.userId })
       .populate('seat')
       .sort({ date: -1, startTime: -1 });

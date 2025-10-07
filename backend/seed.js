@@ -3,7 +3,7 @@ const Seat = require('./models/Seat');
 require('dotenv').config();
 
 // Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/library-seat-booking', {
+mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
@@ -13,7 +13,7 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/library-s
   process.exit(1);
 });
 
-// Seed data
+// Seed data for three locations
 const seedSeats = async () => {
   try {
     // Clear existing seats
@@ -22,62 +22,47 @@ const seedSeats = async () => {
 
     const allSeats = [];
 
-    // Create seats for Floor 1 - Section A (20 seats)
-    for (let i = 1; i <= 20; i++) {
+    // ========================================
+    // READING HALL 1 - Section A, Floor 1
+    // ========================================
+    console.log('\n📚 Creating Reading Hall 1 seats (Section A, Floor 1)...');
+    for (let i = 1; i <= 30; i++) {
       allSeats.push({
         seatNumber: `A${i}`,
         floor: 1,
         section: 'A',
         status: 'available',
-        hasCharging: i % 2 === 0,
+        hasCharging: i % 3 === 0, // Every 3rd seat has charging
         hasLamp: true
       });
     }
 
-    // Create seats for Floor 1 - Section B (20 seats)
-    for (let i = 1; i <= 20; i++) {
+    // ========================================
+    // READING HALL 2 - Section B, Floor 1
+    // ========================================
+    console.log('📖 Creating Reading Hall 2 seats (Section B, Floor 1)...');
+    for (let i = 1; i <= 30; i++) {
       allSeats.push({
         seatNumber: `B${i}`,
         floor: 1,
         section: 'B',
         status: 'available',
-        hasCharging: i % 3 === 0,
+        hasCharging: i % 2 === 0, // Every 2nd seat has charging
         hasLamp: true
       });
     }
 
-    // Create seats for Floor 2 - Section C (25 seats)
-    for (let i = 1; i <= 25; i++) {
+    // ========================================
+    // MAIN LIBRARY - Section C, Floor 2
+    // ========================================
+    console.log('🏛️  Creating Main Library seats (Section C, Floor 2)...');
+    for (let i = 1; i <= 40; i++) {
       allSeats.push({
         seatNumber: `C${i}`,
         floor: 2,
         section: 'C',
         status: 'available',
-        hasCharging: i % 2 === 0,
-        hasLamp: true
-      });
-    }
-
-    // Create seats for Floor 2 - Section D (25 seats - Premium)
-    for (let i = 1; i <= 25; i++) {
-      allSeats.push({
-        seatNumber: `D${i}`,
-        floor: 2,
-        section: 'D',
-        status: 'available',
-        hasCharging: true,
-        hasLamp: true
-      });
-    }
-
-    // Create seats for Floor 3 - Section E (15 seats - Study Rooms)
-    for (let i = 1; i <= 15; i++) {
-      allSeats.push({
-        seatNumber: `E${i}`,
-        floor: 3,
-        section: 'E',
-        status: 'available',
-        hasCharging: true,
+        hasCharging: true, // Premium - all seats have charging
         hasLamp: true
       });
     }
@@ -85,36 +70,66 @@ const seedSeats = async () => {
     // Insert all seats
     await Seat.insertMany(allSeats);
 
-    console.log(`✅ Successfully seeded ${allSeats.length} seats!`);
+    console.log(`\n✅ Successfully seeded ${allSeats.length} seats!`);
     console.log(`
-📊 Seat Distribution:
-  Floor 1:
-    - Section A: 20 seats
-    - Section B: 20 seats
-  Floor 2:
-    - Section C: 25 seats
-    - Section D: 25 seats (Premium - all with charging)
-  Floor 3:
-    - Section E: 15 seats (Study rooms)
-  
-  Total: ${allSeats.length} seats
+╔════════════════════════════════════════════╗
+║        SEAT DISTRIBUTION SUMMARY           ║
+╠════════════════════════════════════════════╣
+║                                            ║
+║  📚 READING HALL 1 (Ground Floor)          ║
+║     Section: A | Floor: 1                  ║
+║     Seats: 30 | Charging: 10               ║
+║     Description: Quiet Study Area          ║
+║                                            ║
+║  📖 READING HALL 2 (Ground Floor)          ║
+║     Section: B | Floor: 1                  ║
+║     Seats: 30 | Charging: 15               ║
+║     Description: Group Study Area          ║
+║                                            ║
+║  🏛️  MAIN LIBRARY (First Floor)           ║
+║     Section: C | Floor: 2                  ║
+║     Seats: 40 | Charging: 40               ║
+║     Description: Premium Seating           ║
+║                                            ║
+║  TOTAL SEATS: ${allSeats.length}                         ║
+║  TOTAL CHARGING PORTS: ${allSeats.filter(s => s.hasCharging).length}                 ║
+║                                            ║
+╚════════════════════════════════════════════╝
     `);
 
-    // Display sample seats
-    const sampleSeats = await Seat.find().limit(5);
-    console.log('\n📋 Sample seats:');
-    sampleSeats.forEach(seat => {
-      console.log(`  - ${seat.seatNumber} (Floor ${seat.floor}, Section ${seat.section}) - ${seat.status}`);
+    // Display sample seats from each location
+    console.log('\n📋 Sample seats from each location:\n');
+    
+    const sampleA = await Seat.find({ section: 'A' }).limit(3);
+    console.log('📚 Reading Hall 1:');
+    sampleA.forEach(seat => {
+      console.log(`   ${seat.seatNumber} - ${seat.hasCharging ? '🔌' : '  '} ${seat.hasLamp ? '💡' : '  '}`);
     });
+
+    const sampleB = await Seat.find({ section: 'B' }).limit(3);
+    console.log('\n📖 Reading Hall 2:');
+    sampleB.forEach(seat => {
+      console.log(`   ${seat.seatNumber} - ${seat.hasCharging ? '🔌' : '  '} ${seat.hasLamp ? '💡' : '  '}`);
+    });
+
+    const sampleC = await Seat.find({ section: 'C' }).limit(3);
+    console.log('\n🏛️  Main Library:');
+    sampleC.forEach(seat => {
+      console.log(`   ${seat.seatNumber} - ${seat.hasCharging ? '🔌' : '  '} ${seat.hasLamp ? '💡' : '  '}`);
+    });
+
+    console.log('\n✨ Database seeding completed successfully!');
+    console.log('🚀 You can now start the server and begin booking seats.\n');
 
   } catch (error) {
     console.error('❌ Error seeding database:', error);
   } finally {
     mongoose.connection.close();
-    console.log('\n✅ Database connection closed');
+    console.log('✅ Database connection closed');
     process.exit(0);
   }
 };
 
 // Run the seed function
+console.log('🌱 Starting database seeding...\n');
 seedSeats();
