@@ -9,6 +9,12 @@ const { validateBookingWindow, timeRangesOverlap } = require('../utils/timeValid
 
 const router = express.Router();
 
+// Helper function to convert time to minutes
+function timeToMinutes(timeStr) {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
 // Create a new booking
 router.post('/book', authenticateToken, async (req, res) => {
   try {
@@ -63,7 +69,7 @@ router.post('/book', authenticateToken, async (req, res) => {
         $gte: dayStart,
         $lt: dayEnd
       },
-      status: { $in: ['pending', 'confirmed'] },
+      status: { $in: ['pending', 'confirmed', 'on-break'] },
       $or: [
         {
           startTime: { $lt: endTime },
@@ -85,7 +91,7 @@ router.post('/book', authenticateToken, async (req, res) => {
         $gte: dayStart,
         $lt: dayEnd
       },
-      status: { $in: ['pending', 'confirmed'] }
+      status: { $in: ['pending', 'confirmed', 'on-break'] }
     }).populate('seat');
 
     // Check if any existing booking from this device overlaps with the requested time
@@ -96,7 +102,6 @@ router.post('/book', authenticateToken, async (req, res) => {
         startTime,
         endTime
       )) {
-        // Check if seat exists before accessing seatNumber
         const seatNumber = existingDeviceBooking.seat ? existingDeviceBooking.seat.seatNumber : 'Unknown';
         
         return res.status(400).json({ 
@@ -118,7 +123,9 @@ router.post('/book', authenticateToken, async (req, res) => {
       startTime,
       endTime,
       status: 'pending',
-      deviceFingerprint: deviceFingerprint
+      deviceFingerprint: deviceFingerprint,
+      breaks: [],
+      currentBreak: null
     });
 
     await booking.save();
@@ -149,6 +156,215 @@ router.post('/book', authenticateToken, async (req, res) => {
     console.error('Booking error:', error);
     res.status(500).json({ 
       message: 'Error creating booking',
+      error: error.message 
+    });
+  }
+});
+
+// Start a break
+router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+    const { breakStartTime, breakEndTime } = req.body;
+
+    console.log('Break request received:', { bookingId, breakStartTime, breakEndTime });
+
+    if (!breakStartTime || !breakEndTime) {
+      return res.status(400).json({ 
+        message: 'Break start and end times are required' 
+      });
+    }
+
+    const booking = await Booking.findById(bookingId).populate('seat');
+
+    if (!booking) {
+      return res.status(404).json({ 
+        message: 'Booking not found' 
+      });
+    }
+
+    console.log('Booking found:', {
+      id: booking._id,
+      status: booking.status,
+      currentBreak: booking.currentBreak,
+      attendanceConfirmed: booking.attendanceConfirmed
+    });
+
+    if (booking.user.toString() !== req.userId) {
+      return res.status(403).json({ 
+        message: 'Unauthorized' 
+      });
+    }
+
+    // Check if already on break - be more specific
+    if (booking.currentBreak && booking.currentBreak.startTime) {
+      return res.status(400).json({ 
+        message: 'You are already on a break' 
+      });
+    }
+
+    // Accept both 'confirmed' and 'pending' with attendance confirmed
+    if (booking.status !== 'confirmed' && !(booking.status === 'pending' && booking.attendanceConfirmed)) {
+      return res.status(400).json({ 
+        message: `Cannot take break. Status: ${booking.status}, Attendance confirmed: ${booking.attendanceConfirmed}. Please confirm attendance first.` 
+      });
+    }
+
+    // Validate break duration (minimum 20 minutes)
+    const breakStartMinutes = timeToMinutes(breakStartTime);
+    const breakEndMinutes = timeToMinutes(breakEndTime);
+    let breakDuration = breakEndMinutes - breakStartMinutes;
+    
+    // Handle overnight breaks (e.g., 23:00 to 00:30)
+    if (breakDuration < 0) {
+      breakDuration = (24 * 60 - breakStartMinutes) + breakEndMinutes;
+    }
+
+    console.log('Break duration:', breakDuration, 'minutes');
+
+    if (breakDuration < 20) {
+      return res.status(400).json({ 
+        message: `Break must be at least 20 minutes long. Current duration: ${breakDuration} minutes` 
+      });
+    }
+
+    // Validate break is within booking time
+    const bookingStartMinutes = timeToMinutes(booking.startTime);
+    let bookingEndMinutes = timeToMinutes(booking.endTime);
+    
+    // Handle overnight bookings
+    if (bookingEndMinutes < bookingStartMinutes) {
+      bookingEndMinutes += 24 * 60;
+    }
+
+    let adjustedBreakStart = breakStartMinutes;
+    let adjustedBreakEnd = breakEndMinutes;
+
+    // Adjust for overnight scenarios
+    if (breakStartMinutes < bookingStartMinutes && bookingEndMinutes > 24 * 60) {
+      adjustedBreakStart += 24 * 60;
+    }
+    if (breakEndMinutes < breakStartMinutes) {
+      adjustedBreakEnd += 24 * 60;
+    }
+
+    console.log('Time validation:', {
+      bookingStart: bookingStartMinutes,
+      bookingEnd: bookingEndMinutes,
+      breakStart: adjustedBreakStart,
+      breakEnd: adjustedBreakEnd
+    });
+
+    if (adjustedBreakStart < bookingStartMinutes || adjustedBreakEnd > bookingEndMinutes) {
+      return res.status(400).json({ 
+        message: `Break must be within your booking time slot (${booking.startTime} - ${booking.endTime})` 
+      });
+    }
+
+    // Check for overlapping breaks
+    if (booking.breaks && booking.breaks.length > 0) {
+      for (const existingBreak of booking.breaks) {
+        if (timeRangesOverlap(
+          existingBreak.startTime,
+          existingBreak.endTime,
+          breakStartTime,
+          breakEndTime
+        )) {
+          return res.status(400).json({ 
+            message: `Break time overlaps with an existing break (${existingBreak.startTime} - ${existingBreak.endTime})` 
+          });
+        }
+      }
+    }
+
+    // Start the break
+    booking.currentBreak = {
+      startTime: breakStartTime,
+      endTime: breakEndTime,
+      startedAt: new Date()
+    };
+    booking.status = 'on-break';
+    
+    // Mark as modified to ensure save
+    booking.markModified('currentBreak');
+    booking.markModified('status');
+    
+    await booking.save();
+
+    console.log('Break started successfully for booking:', bookingId);
+
+    const updatedBooking = await Booking.findById(bookingId).populate('seat');
+
+    res.json({
+      message: 'Break started successfully',
+      booking: updatedBooking,
+      currentBreak: updatedBooking.currentBreak
+    });
+  } catch (error) {
+    console.error('Start break error:', error);
+    res.status(500).json({ 
+      message: 'Error starting break',
+      error: error.message 
+    });
+  }
+});
+
+// End a break
+router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
+  try {
+    const { bookingId } = req.params;
+
+    const booking = await Booking.findById(bookingId).populate('seat');
+
+    if (!booking) {
+      return res.status(404).json({ 
+        message: 'Booking not found' 
+      });
+    }
+
+    if (booking.user.toString() !== req.userId) {
+      return res.status(403).json({ 
+        message: 'Unauthorized' 
+      });
+    }
+
+    if (!booking.currentBreak || !booking.currentBreak.startTime) {
+      return res.status(400).json({ 
+        message: 'No active break found' 
+      });
+    }
+
+    // Save the break to history
+    if (!booking.breaks) {
+      booking.breaks = [];
+    }
+    
+    booking.breaks.push({
+      startTime: booking.currentBreak.startTime,
+      endTime: booking.currentBreak.endTime,
+      takenAt: booking.currentBreak.startedAt
+    });
+
+    // Clear current break and restore status
+    booking.currentBreak = null;
+    booking.status = 'confirmed';
+    
+    booking.markModified('breaks');
+    booking.markModified('currentBreak');
+    booking.markModified('status');
+    
+    await booking.save();
+
+    const updatedBooking = await Booking.findById(bookingId).populate('seat');
+
+    res.json({
+      message: 'Break ended successfully',
+      booking: updatedBooking
+    });
+  } catch (error) {
+    console.error('End break error:', error);
+    res.status(500).json({ 
+      message: 'Error ending break',
       error: error.message 
     });
   }
@@ -279,6 +495,7 @@ router.delete('/:bookingId', authenticateToken, async (req, res) => {
 
     booking.status = 'cancelled';
     booking.cancellationReason = 'Cancelled by user';
+    booking.currentBreak = null; // Clear any active break
     await booking.save();
 
     // Free up the seat

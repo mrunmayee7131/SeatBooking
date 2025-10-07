@@ -58,6 +58,17 @@ const Dashboard = () => {
     filterSeats();
   }, [selectedLocation, seats, selectedDate, startTime, endTime]);
 
+  // Auto-refresh seats every 30 seconds to update break status
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (selectedLocation && selectedDate && startTime && endTime) {
+        fetchSeats();
+      }
+    }, 30000);
+
+    return () => clearInterval(interval);
+  }, [selectedLocation, selectedDate, startTime, endTime]);
+
   const fetchUserProfile = async () => {
     try {
       const token = localStorage.getItem('token');
@@ -74,8 +85,26 @@ const Dashboard = () => {
   const fetchSeats = async () => {
     try {
       const token = localStorage.getItem('token');
+      const params = {};
+      
+      if (selectedLocation) {
+        const location = locations.find(loc => loc.id === selectedLocation);
+        if (location) {
+          params.floor = location.floor;
+          params.section = location.section;
+        }
+      }
+
+      // Add date and time params for break status
+      if (selectedDate && startTime && endTime) {
+        params.date = selectedDate;
+        params.startTime = startTime;
+        params.endTime = endTime;
+      }
+
       const response = await axios.get('http://localhost:5000/api/seats', {
-        headers: { Authorization: `Bearer ${token}` }
+        headers: { Authorization: `Bearer ${token}` },
+        params
       });
       setSeats(response.data.seats);
       setLoading(false);
@@ -104,6 +133,39 @@ const Dashboard = () => {
   const handleLocationSelect = (locationId) => {
     setSelectedLocation(locationId);
     setError('');
+  };
+
+  const getSeatBackgroundColor = (seat) => {
+    if (seat.isOnBreak) {
+      return '#FFC107'; // Yellow for on-break
+    }
+    if (seat.isBooked || seat.status === 'occupied') {
+      return '#f44336'; // Red for occupied
+    }
+    if (seat.status === 'maintenance') {
+      return '#9E9E9E'; // Gray for maintenance
+    }
+    return '#4CAF50'; // Green for available
+  };
+
+  const getSeatCursor = (seat) => {
+    if (!seat.isBooked && seat.status === 'available') {
+      return 'pointer';
+    }
+    return 'not-allowed';
+  };
+
+  const getSeatTitle = (seat) => {
+    if (seat.isOnBreak) {
+      return 'Seat is currently on break';
+    }
+    if (seat.isBooked) {
+      return 'Seat is occupied';
+    }
+    if (seat.status === 'maintenance') {
+      return 'Under maintenance';
+    }
+    return 'Click to book';
   };
 
   const handleBookSeat = async (seatId) => {
@@ -174,6 +236,7 @@ const Dashboard = () => {
 
   const handleLogout = () => {
     localStorage.removeItem('token');
+    localStorage.removeItem('user');
     navigate('/login');
   };
 
@@ -265,7 +328,7 @@ const Dashboard = () => {
               </div>
             </div>
             <div style={styles.timeNote}>
-              ⏰ Booking hours: 8:00 AM - 1:00 AM (next day)
+              ⏰ Booking hours: 8:00 AM - 6:00 PM (can extend to 1:00 AM next day)
             </div>
           </div>
         )}
@@ -289,6 +352,10 @@ const Dashboard = () => {
                 <span>Available</span>
               </div>
               <div style={styles.legendItem}>
+                <div style={{ ...styles.legendBox, backgroundColor: '#FFC107' }}></div>
+                <span>On Break</span>
+              </div>
+              <div style={styles.legendItem}>
                 <div style={{ ...styles.legendBox, backgroundColor: '#f44336' }}></div>
                 <span>Occupied</span>
               </div>
@@ -307,20 +374,27 @@ const Dashboard = () => {
                     key={seat._id}
                     style={{
                       ...styles.seatCard,
-                      backgroundColor: 
-                        seat.status === 'available' ? '#4CAF50' :
-                        seat.status === 'occupied' ? '#f44336' : '#9E9E9E',
-                      cursor: seat.status === 'available' ? 'pointer' : 'not-allowed'
+                      backgroundColor: getSeatBackgroundColor(seat),
+                      cursor: getSeatCursor(seat)
                     }}
-                    onClick={() => seat.status === 'available' && handleBookSeat(seat._id)}
+                    onClick={() => {
+                      if (!seat.isBooked && seat.status === 'available') {
+                        handleBookSeat(seat._id);
+                      }
+                    }}
+                    title={getSeatTitle(seat)}
                   >
                     <div style={styles.seatNumber}>{seat.seatNumber}</div>
                     <div style={styles.seatAmenities}>
                       {seat.hasCharging && <span style={styles.amenityIcon}>🔌</span>}
                       {seat.hasLamp && <span style={styles.amenityIcon}>💡</span>}
                     </div>
+                    {seat.isOnBreak && (
+                      <div style={{ fontSize: '16px', marginTop: '4px' }}>🟡</div>
+                    )}
                     <div style={styles.seatStatus}>
-                      {seat.status === 'available' ? 'Available' : 
+                      {seat.isOnBreak ? 'On Break' :
+                       seat.status === 'available' ? 'Available' : 
                        seat.status === 'occupied' ? 'Occupied' : 'Maintenance'}
                     </div>
                   </div>
@@ -330,36 +404,35 @@ const Dashboard = () => {
           </div>
         )}
 
-        {/* Instructions */}
         {!selectedLocation && (
           <div style={styles.instructions}>
-            <h3>👆 Start by selecting a location above</h3>
-            <p>Choose from Reading Hall 1, Reading Hall 2, or Main Library to view available seats.</p>
+            <h3>📍 Please select a location to view available seats</h3>
+            <p>Choose from the available reading halls and library sections above</p>
           </div>
         )}
       </div>
 
-      {/* Confirmation Modal */}
+      {/* Booking Confirmation Modal */}
       {showConfirmModal && pendingBooking && (
-        <div style={styles.modalOverlay} onClick={cancelBooking}>
-          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+        <div style={styles.modalOverlay}>
+          <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>🎫 Confirm Booking</h2>
+              <h2 style={styles.modalTitle}>Confirm Booking</h2>
             </div>
-            
+
             <div style={styles.modalBody}>
               <div style={styles.bookingDetail}>
-                <span style={styles.detailLabel}>📍 Seat:</span>
+                <span style={styles.detailLabel}>Seat Number:</span>
                 <span style={styles.detailValue}>{pendingBooking.seatNumber}</span>
               </div>
-              
               <div style={styles.bookingDetail}>
-                <span style={styles.detailLabel}>📅 Date:</span>
-                <span style={styles.detailValue}>{pendingBooking.date}</span>
+                <span style={styles.detailLabel}>Date:</span>
+                <span style={styles.detailValue}>
+                  {new Date(pendingBooking.date).toLocaleDateString()}
+                </span>
               </div>
-              
               <div style={styles.bookingDetail}>
-                <span style={styles.detailLabel}>⏰ Time:</span>
+                <span style={styles.detailLabel}>Time:</span>
                 <span style={styles.detailValue}>
                   {pendingBooking.startTime} - {pendingBooking.endTime}
                 </span>
@@ -368,9 +441,8 @@ const Dashboard = () => {
               <div style={styles.warningBox}>
                 <div style={styles.warningIcon}>⚠️</div>
                 <div style={styles.warningText}>
-                  <strong>Important:</strong> Please confirm your attendance within 
-                  <strong> 20 minutes</strong> of booking start time, or your booking 
-                  will be automatically cancelled.
+                  <strong>Important:</strong> You must confirm your attendance within 20 minutes 
+                  of your booking start time, or your booking will be automatically cancelled.
                 </div>
               </div>
             </div>

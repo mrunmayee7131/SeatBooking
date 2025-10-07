@@ -1,5 +1,20 @@
 const mongoose = require('mongoose');
 
+const breakSchema = new mongoose.Schema({
+  startTime: {
+    type: String,
+    required: true
+  },
+  endTime: {
+    type: String,
+    required: true
+  },
+  takenAt: {
+    type: Date,
+    default: Date.now
+  }
+}, { _id: false });
+
 const bookingSchema = new mongoose.Schema({
   user: {
     type: mongoose.Schema.Types.ObjectId,
@@ -25,7 +40,7 @@ const bookingSchema = new mongoose.Schema({
   },
   status: {
     type: String,
-    enum: ['pending', 'confirmed', 'cancelled', 'completed', 'expired'],
+    enum: ['pending', 'confirmed', 'cancelled', 'completed', 'expired', 'on-break'],
     default: 'pending'
   },
   attendanceConfirmed: {
@@ -46,6 +61,15 @@ const bookingSchema = new mongoose.Schema({
     type: String,
     required: true,
     index: true
+  },
+  breaks: {
+    type: [breakSchema],
+    default: []
+  },
+  currentBreak: {
+    startTime: String,
+    endTime: String,
+    startedAt: Date
   }
 }, {
   timestamps: true
