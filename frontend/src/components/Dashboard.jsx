@@ -13,6 +13,8 @@ const Dashboard = () => {
   const [endTime, setEndTime] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [showConfirmModal, setShowConfirmModal] = useState(false);
+  const [pendingBooking, setPendingBooking] = useState(null);
 
   // Location configurations
   const locations = [
@@ -110,31 +112,64 @@ const Dashboard = () => {
       return;
     }
 
-    if (startTime >= endTime) {
+    if (startTime >= endTime && timeToMinutes(endTime) > timeToMinutes('01:00')) {
       setError('End time must be after start time');
       return;
     }
+
+    // Get seat details for confirmation
+    const seat = filteredSeats.find(s => s._id === seatId);
+    const seatNumber = seat ? seat.seatNumber : 'Unknown';
+    
+    // Store booking details and show modal
+    setPendingBooking({
+      seatId,
+      seatNumber,
+      date: selectedDate,
+      startTime,
+      endTime
+    });
+    setShowConfirmModal(true);
+  };
+
+  const confirmBooking = async () => {
+    if (!pendingBooking) return;
 
     try {
       const token = localStorage.getItem('token');
       await axios.post(
         'http://localhost:5000/api/bookings/book',
         {
-          seatId,
-          date: selectedDate,
-          startTime,
-          endTime
+          seatId: pendingBooking.seatId,
+          date: pendingBooking.date,
+          startTime: pendingBooking.startTime,
+          endTime: pendingBooking.endTime
         },
         {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
 
+      setShowConfirmModal(false);
+      setPendingBooking(null);
       alert('Booking successful! Please confirm your attendance within 20 minutes.');
       navigate('/my-bookings');
     } catch (err) {
+      setShowConfirmModal(false);
+      setPendingBooking(null);
       setError(err.response?.data?.message || 'Booking failed');
     }
+  };
+
+  const cancelBooking = () => {
+    setShowConfirmModal(false);
+    setPendingBooking(null);
+  };
+
+  // Helper function to convert time to minutes
+  const timeToMinutes = (timeStr) => {
+    const [hours, minutes] = timeStr.split(':').map(Number);
+    return hours * 60 + minutes;
   };
 
   const handleLogout = () => {
@@ -230,7 +265,7 @@ const Dashboard = () => {
               </div>
             </div>
             <div style={styles.timeNote}>
-              ⏰ Booking hours: 8:00 AM - 6:00 PM
+              ⏰ Booking hours: 8:00 AM - 1:00 AM (next day)
             </div>
           </div>
         )}
@@ -274,7 +309,8 @@ const Dashboard = () => {
                       ...styles.seatCard,
                       backgroundColor: 
                         seat.status === 'available' ? '#4CAF50' :
-                        seat.status === 'occupied' ? '#f44336' : '#9E9E9E'
+                        seat.status === 'occupied' ? '#f44336' : '#9E9E9E',
+                      cursor: seat.status === 'available' ? 'pointer' : 'not-allowed'
                     }}
                     onClick={() => seat.status === 'available' && handleBookSeat(seat._id)}
                   >
@@ -302,6 +338,60 @@ const Dashboard = () => {
           </div>
         )}
       </div>
+
+      {/* Confirmation Modal */}
+      {showConfirmModal && pendingBooking && (
+        <div style={styles.modalOverlay} onClick={cancelBooking}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <div style={styles.modalHeader}>
+              <h2 style={styles.modalTitle}>🎫 Confirm Booking</h2>
+            </div>
+            
+            <div style={styles.modalBody}>
+              <div style={styles.bookingDetail}>
+                <span style={styles.detailLabel}>📍 Seat:</span>
+                <span style={styles.detailValue}>{pendingBooking.seatNumber}</span>
+              </div>
+              
+              <div style={styles.bookingDetail}>
+                <span style={styles.detailLabel}>📅 Date:</span>
+                <span style={styles.detailValue}>{pendingBooking.date}</span>
+              </div>
+              
+              <div style={styles.bookingDetail}>
+                <span style={styles.detailLabel}>⏰ Time:</span>
+                <span style={styles.detailValue}>
+                  {pendingBooking.startTime} - {pendingBooking.endTime}
+                </span>
+              </div>
+
+              <div style={styles.warningBox}>
+                <div style={styles.warningIcon}>⚠️</div>
+                <div style={styles.warningText}>
+                  <strong>Important:</strong> Please confirm your attendance within 
+                  <strong> 20 minutes</strong> of booking start time, or your booking 
+                  will be automatically cancelled.
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.modalFooter}>
+              <button 
+                onClick={cancelBooking}
+                style={styles.btnCancel}
+              >
+                Cancel
+              </button>
+              <button 
+                onClick={confirmBooking}
+                style={styles.btnConfirm}
+              >
+                Confirm Booking
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -550,6 +640,110 @@ const styles = {
     backgroundColor: 'white',
     borderRadius: '16px',
     boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+  },
+  modalOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    zIndex: 1000,
+    backdropFilter: 'blur(4px)'
+  },
+  modalContent: {
+    backgroundColor: 'white',
+    borderRadius: '20px',
+    width: '90%',
+    maxWidth: '500px',
+    boxShadow: '0 20px 60px rgba(0,0,0,0.3)',
+    overflow: 'hidden'
+  },
+  modalHeader: {
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    padding: '25px',
+    color: 'white'
+  },
+  modalTitle: {
+    margin: 0,
+    fontSize: '24px',
+    fontWeight: 'bold'
+  },
+  modalBody: {
+    padding: '30px'
+  },
+  bookingDetail: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '15px',
+    marginBottom: '12px',
+    backgroundColor: '#f8f9fa',
+    borderRadius: '10px',
+    borderLeft: '4px solid #667eea'
+  },
+  detailLabel: {
+    fontSize: '16px',
+    fontWeight: '600',
+    color: '#333'
+  },
+  detailValue: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: '#667eea'
+  },
+  warningBox: {
+    display: 'flex',
+    gap: '15px',
+    padding: '20px',
+    marginTop: '20px',
+    backgroundColor: '#fff3cd',
+    border: '2px solid #ffc107',
+    borderRadius: '12px'
+  },
+  warningIcon: {
+    fontSize: '28px',
+    flexShrink: 0
+  },
+  warningText: {
+    fontSize: '14px',
+    lineHeight: '1.6',
+    color: '#856404'
+  },
+  modalFooter: {
+    display: 'flex',
+    gap: '15px',
+    padding: '20px 30px',
+    backgroundColor: '#f8f9fa',
+    borderTop: '1px solid #e0e0e0'
+  },
+  btnCancel: {
+    flex: 1,
+    padding: '14px',
+    fontSize: '16px',
+    fontWeight: '600',
+    border: '2px solid #6c757d',
+    backgroundColor: 'white',
+    color: '#6c757d',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    transition: 'all 0.3s'
+  },
+  btnConfirm: {
+    flex: 1,
+    padding: '14px',
+    fontSize: '16px',
+    fontWeight: '600',
+    border: 'none',
+    background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+    color: 'white',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    transition: 'all 0.3s',
+    boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
   }
 };
 
