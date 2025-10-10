@@ -136,8 +136,13 @@ const Dashboard = () => {
   };
 
   const getSeatBackgroundColor = (seat) => {
+    // Seat is available during break time
+    if (seat.availableInBreak) {
+      return '#FFC107'; // Yellow - available during break
+    }
+    // Seat is on break but not available for current time slot
     if (seat.isOnBreak) {
-      return '#FFC107'; // Yellow for on-break
+      return '#FF9800'; // Orange - on break but not bookable
     }
     if (seat.isBooked || seat.status === 'occupied') {
       return '#f44336'; // Red for occupied
@@ -149,15 +154,18 @@ const Dashboard = () => {
   };
 
   const getSeatCursor = (seat) => {
-    if (!seat.isBooked && seat.status === 'available') {
+    if (seat.availableInBreak || (!seat.isBooked && seat.status === 'available')) {
       return 'pointer';
     }
     return 'not-allowed';
   };
 
   const getSeatTitle = (seat) => {
+    if (seat.availableInBreak) {
+      return `Available during break (${seat.breakTimeInfo.breakStart} - ${seat.breakTimeInfo.breakEnd})`;
+    }
     if (seat.isOnBreak) {
-      return 'Seat is currently on break';
+      return 'Seat is on break (not available for your selected time)';
     }
     if (seat.isBooked) {
       return 'Seat is occupied';
@@ -189,7 +197,9 @@ const Dashboard = () => {
       seatNumber,
       date: selectedDate,
       startTime,
-      endTime
+      endTime,
+      isBreakBooking: seat.availableInBreak,
+      breakInfo: seat.breakTimeInfo
     });
     setShowConfirmModal(true);
   };
@@ -214,7 +224,13 @@ const Dashboard = () => {
 
       setShowConfirmModal(false);
       setPendingBooking(null);
-      alert('Booking successful! Please confirm your attendance within 20 minutes.');
+      
+      if (pendingBooking.isBreakBooking) {
+        alert('Break booking successful! You can use this seat during the break time.');
+      } else {
+        alert('Booking successful! Please confirm your attendance within 20 minutes.');
+      }
+      
       navigate('/my-bookings');
     } catch (err) {
       setShowConfirmModal(false);
@@ -353,7 +369,7 @@ const Dashboard = () => {
               </div>
               <div style={styles.legendItem}>
                 <div style={{ ...styles.legendBox, backgroundColor: '#FFC107' }}></div>
-                <span>On Break</span>
+                <span>Available (Break Time)</span>
               </div>
               <div style={styles.legendItem}>
                 <div style={{ ...styles.legendBox, backgroundColor: '#f44336' }}></div>
@@ -378,7 +394,7 @@ const Dashboard = () => {
                       cursor: getSeatCursor(seat)
                     }}
                     onClick={() => {
-                      if (!seat.isBooked && seat.status === 'available') {
+                      if (seat.availableInBreak || (!seat.isBooked && seat.status === 'available')) {
                         handleBookSeat(seat._id);
                       }
                     }}
@@ -389,11 +405,11 @@ const Dashboard = () => {
                       {seat.hasCharging && <span style={styles.amenityIcon}>🔌</span>}
                       {seat.hasLamp && <span style={styles.amenityIcon}>💡</span>}
                     </div>
-                    {seat.isOnBreak && (
-                      <div style={{ fontSize: '16px', marginTop: '4px' }}>🟡</div>
+                    {seat.availableInBreak && (
+                      <div style={{ fontSize: '16px', marginTop: '4px' }}>⏰</div>
                     )}
                     <div style={styles.seatStatus}>
-                      {seat.isOnBreak ? 'On Break' :
+                      {seat.availableInBreak ? 'Break Time' :
                        seat.status === 'available' ? 'Available' : 
                        seat.status === 'occupied' ? 'Occupied' : 'Maintenance'}
                     </div>
@@ -417,7 +433,9 @@ const Dashboard = () => {
         <div style={styles.modalOverlay}>
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
-              <h2 style={styles.modalTitle}>Confirm Booking</h2>
+              <h2 style={styles.modalTitle}>
+                {pendingBooking.isBreakBooking ? 'Confirm Break Time Booking' : 'Confirm Booking'}
+              </h2>
             </div>
 
             <div style={styles.modalBody}>
@@ -438,13 +456,31 @@ const Dashboard = () => {
                 </span>
               </div>
 
-              <div style={styles.warningBox}>
-                <div style={styles.warningIcon}>⚠️</div>
-                <div style={styles.warningText}>
-                  <strong>Important:</strong> You must confirm your attendance within 20 minutes 
-                  of your booking start time, or your booking will be automatically cancelled.
+              {pendingBooking.isBreakBooking && (
+                <div style={styles.breakBookingInfo}>
+                  <div style={styles.breakInfoIcon}>⏰</div>
+                  <div>
+                    <strong>Break Time Booking</strong>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '14px' }}>
+                      This seat is on break from {pendingBooking.breakInfo.breakStart} to {pendingBooking.breakInfo.breakEnd}.
+                      You can use it during this time.
+                    </p>
+                    <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#666' }}>
+                      Owner: {pendingBooking.breakInfo.ownerName}
+                    </p>
+                  </div>
                 </div>
-              </div>
+              )}
+
+              {!pendingBooking.isBreakBooking && (
+                <div style={styles.warningBox}>
+                  <div style={styles.warningIcon}>⚠️</div>
+                  <div style={styles.warningText}>
+                    <strong>Important:</strong> You must confirm your attendance within 20 minutes 
+                    of your booking start time, or your booking will be automatically cancelled.
+                  </div>
+                </div>
+              )}
             </div>
 
             <div style={styles.modalFooter}>
@@ -766,6 +802,19 @@ const styles = {
     fontSize: '16px',
     fontWeight: '700',
     color: '#667eea'
+  },
+  breakBookingInfo: {
+    display: 'flex',
+    gap: '15px',
+    padding: '20px',
+    marginTop: '20px',
+    backgroundColor: '#fff3e0',
+    border: '2px solid #ff9800',
+    borderRadius: '12px'
+  },
+  breakInfoIcon: {
+    fontSize: '28px',
+    flexShrink: 0
   },
   warningBox: {
     display: 'flex',

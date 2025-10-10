@@ -5,10 +5,27 @@ const { authenticateToken } = require('../middleware/auth');
 
 const router = express.Router();
 
-// Get all seats
+// Helper function to convert time to minutes
+function timeToMinutes(timeStr) {
+  const [hours, minutes] = timeStr.split(':').map(Number);
+  return hours * 60 + minutes;
+}
+
+// Check if requested time is completely within a break time
+function isTimeWithinBreak(requestStart, requestEnd, breakStart, breakEnd) {
+  const reqStartMin = timeToMinutes(requestStart);
+  const reqEndMin = timeToMinutes(requestEnd);
+  const breakStartMin = timeToMinutes(breakStart);
+  const breakEndMin = timeToMinutes(breakEnd);
+
+  // Requested time must be completely within break time
+  return reqStartMin >= breakStartMin && reqEndMin <= breakEndMin;
+}
+
+// Get all seats with their booking status
 router.get('/', authenticateToken, async (req, res) => {
   try {
-    const { floor, section, status } = req.query;
+    const { floor, section, status, date, startTime, endTime } = req.query;
     
     const filter = {};
     if (floor) filter.floor = parseInt(floor);
@@ -17,6 +34,84 @@ router.get('/', authenticateToken, async (req, res) => {
 
     const seats = await Seat.find(filter).sort({ floor: 1, seatNumber: 1 });
     
+    // If date and time are provided, check for bookings (including on-break status)
+    if (date && startTime && endTime) {
+      const bookingDate = new Date(date);
+      const dayStart = new Date(bookingDate);
+      dayStart.setHours(0, 0, 0, 0);
+      const dayEnd = new Date(bookingDate);
+      dayEnd.setHours(23, 59, 59, 999);
+
+      // Find all bookings for this date
+      const bookings = await Booking.find({
+        date: {
+          $gte: dayStart,
+          $lt: dayEnd
+        },
+        status: { $in: ['pending', 'confirmed', 'on-break'] }
+      }).populate('seat user');
+
+      // Add booking info and on-break status to seats
+      const seatsWithBookingInfo = seats.map(seat => {
+        // Find bookings for this seat
+        const seatBookings = bookings.filter(b => 
+          b.seat && b.seat._id.toString() === seat._id.toString()
+        );
+
+        let isBooked = false;
+        let isOnBreak = false;
+        let bookingStatus = null;
+        let currentBreak = null;
+        let availableInBreak = false;
+        let breakTimeInfo = null;
+
+        for (const booking of seatBookings) {
+          // Check if there's an overlap with requested time (excluding break times)
+          const bookStartMin = timeToMinutes(booking.startTime);
+          const bookEndMin = timeToMinutes(booking.endTime);
+          const reqStartMin = timeToMinutes(startTime);
+          const reqEndMin = timeToMinutes(endTime);
+
+          // Check if booking is on break
+          if (booking.status === 'on-break' && booking.currentBreak) {
+            isOnBreak = true;
+            currentBreak = booking.currentBreak;
+
+            // Check if requested time is COMPLETELY within the break time
+            if (isTimeWithinBreak(startTime, endTime, booking.currentBreak.startTime, booking.currentBreak.endTime)) {
+              availableInBreak = true;
+              breakTimeInfo = {
+                breakStart: booking.currentBreak.startTime,
+                breakEnd: booking.currentBreak.endTime,
+                ownerName: booking.user?.name || 'User'
+              };
+            } else {
+              // If not completely within break, seat is not available
+              isBooked = true;
+            }
+          } else {
+            // Regular booking - check for overlap
+            if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+              isBooked = true;
+              bookingStatus = booking.status;
+            }
+          }
+        }
+
+        return {
+          ...seat.toObject(),
+          isBooked: isBooked && !availableInBreak,
+          isOnBreak,
+          availableInBreak,
+          breakTimeInfo,
+          bookingStatus,
+          currentBreak
+        };
+      });
+
+      return res.json({ seats: seatsWithBookingInfo });
+    }
+
     res.json({ seats });
   } catch (error) {
     console.error('Error fetching seats:', error);
@@ -40,25 +135,64 @@ router.get('/available', authenticateToken, async (req, res) => {
     // Get all available seats
     const allSeats = await Seat.find({ status: 'available' });
 
-    // Find seats that are not booked for the specified time slot
     const bookingDate = new Date(date);
-    const bookedSeats = await Booking.find({
-      date: {
-        $gte: new Date(bookingDate.setHours(0, 0, 0, 0)),
-        $lt: new Date(bookingDate.setHours(23, 59, 59, 999))
-      },
-      status: { $in: ['pending', 'confirmed'] },
-      $or: [
-        {
-          startTime: { $lt: endTime },
-          endTime: { $gt: startTime }
-        }
-      ]
-    }).distinct('seat');
+    const dayStart = new Date(bookingDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(bookingDate);
+    dayEnd.setHours(23, 59, 59, 999);
 
-    const availableSeats = allSeats.filter(
-      seat => !bookedSeats.some(bookedSeatId => bookedSeatId.equals(seat._id))
-    );
+    // Find all bookings for this date
+    const bookings = await Booking.find({
+      date: {
+        $gte: dayStart,
+        $lt: dayEnd
+      },
+      status: { $in: ['pending', 'confirmed', 'on-break'] }
+    });
+
+    const availableSeats = [];
+
+    for (const seat of allSeats) {
+      let seatAvailable = true;
+
+      const seatBookings = bookings.filter(b => b.seat.toString() === seat._id.toString());
+
+      for (const booking of seatBookings) {
+        const bookStartMin = timeToMinutes(booking.startTime);
+        const bookEndMin = timeToMinutes(booking.endTime);
+        const reqStartMin = timeToMinutes(startTime);
+        const reqEndMin = timeToMinutes(endTime);
+
+        // If booking is on break, check if requested time is within break
+        if (booking.status === 'on-break' && booking.currentBreak) {
+          const isWithinBreak = isTimeWithinBreak(
+            startTime,
+            endTime,
+            booking.currentBreak.startTime,
+            booking.currentBreak.endTime
+          );
+
+          if (!isWithinBreak) {
+            // Requested time is not within break, check normal overlap
+            if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+              seatAvailable = false;
+              break;
+            }
+          }
+          // If within break, seat is available
+        } else {
+          // Regular booking - check for overlap
+          if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+            seatAvailable = false;
+            break;
+          }
+        }
+      }
+
+      if (seatAvailable) {
+        availableSeats.push(seat);
+      }
+    }
 
     res.json({ seats: availableSeats });
   } catch (error) {
@@ -85,102 +219,6 @@ router.get('/:seatId', authenticateToken, async (req, res) => {
     console.error('Error fetching seat:', error);
     res.status(500).json({ 
       message: 'Error fetching seat' 
-    });
-  }
-});
-
-// Admin: Create new seat (you can add admin middleware here)
-router.post('/', authenticateToken, async (req, res) => {
-  try {
-    const { seatNumber, floor, section, hasCharging, hasLamp } = req.body;
-
-    if (!seatNumber || !floor || !section) {
-      return res.status(400).json({ 
-        message: 'Seat number, floor, and section are required' 
-      });
-    }
-
-    const existingSeat = await Seat.findOne({ seatNumber });
-    if (existingSeat) {
-      return res.status(400).json({ 
-        message: 'Seat with this number already exists' 
-      });
-    }
-
-    const seat = new Seat({
-      seatNumber,
-      floor,
-      section,
-      hasCharging: hasCharging || false,
-      hasLamp: hasLamp || false
-    });
-
-    await seat.save();
-
-    res.status(201).json({
-      message: 'Seat created successfully',
-      seat
-    });
-  } catch (error) {
-    console.error('Error creating seat:', error);
-    res.status(500).json({ 
-      message: 'Error creating seat' 
-    });
-  }
-});
-
-// Admin: Update seat status
-router.patch('/:seatId', authenticateToken, async (req, res) => {
-  try {
-    const { status } = req.body;
-
-    if (!['available', 'occupied', 'maintenance'].includes(status)) {
-      return res.status(400).json({ 
-        message: 'Invalid status' 
-      });
-    }
-
-    const seat = await Seat.findById(req.params.seatId);
-
-    if (!seat) {
-      return res.status(404).json({ 
-        message: 'Seat not found' 
-      });
-    }
-
-    seat.status = status;
-    await seat.save();
-
-    res.json({
-      message: 'Seat status updated successfully',
-      seat
-    });
-  } catch (error) {
-    console.error('Error updating seat:', error);
-    res.status(500).json({ 
-      message: 'Error updating seat' 
-    });
-  }
-});
-
-// Admin: Delete seat
-router.delete('/:seatId', authenticateToken, async (req, res) => {
-  try {
-    const seat = await Seat.findByIdAndDelete(req.params.seatId);
-
-    if (!seat) {
-      return res.status(404).json({ 
-        message: 'Seat not found' 
-      });
-    }
-
-    res.json({ 
-      message: 'Seat deleted successfully' 
-    });
-  } catch (error) {
-    console.error('Error deleting seat:', error);
-    res.status(500).json({ 
-      message: 'Error deleting seat' 
     });
   }
 });

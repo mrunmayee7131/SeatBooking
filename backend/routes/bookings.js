@@ -15,6 +15,17 @@ function timeToMinutes(timeStr) {
   return hours * 60 + minutes;
 }
 
+// Check if requested time is completely within a break time
+function isTimeWithinBreak(requestStart, requestEnd, breakStart, breakEnd) {
+  const reqStartMin = timeToMinutes(requestStart);
+  const reqEndMin = timeToMinutes(requestEnd);
+  const breakStartMin = timeToMinutes(breakStart);
+  const breakEndMin = timeToMinutes(breakEnd);
+
+  // Requested time must be completely within break time
+  return reqStartMin >= breakStartMin && reqEndMin <= breakEndMin;
+}
+
 // Create a new booking
 router.post('/book', authenticateToken, async (req, res) => {
   try {
@@ -63,25 +74,53 @@ router.post('/book', authenticateToken, async (req, res) => {
     dayEnd.setHours(23, 59, 59, 999);
 
     // Check for overlapping bookings on the same seat
-    const existingBooking = await Booking.findOne({
+    const existingBookings = await Booking.find({
       seat: seatId,
       date: {
         $gte: dayStart,
         $lt: dayEnd
       },
-      status: { $in: ['pending', 'confirmed', 'on-break'] },
-      $or: [
-        {
-          startTime: { $lt: endTime },
-          endTime: { $gt: startTime }
-        }
-      ]
+      status: { $in: ['pending', 'confirmed', 'on-break'] }
     });
 
-    if (existingBooking) {
-      return res.status(400).json({ 
-        message: 'Seat is already booked for this time slot' 
-      });
+    // Check each existing booking
+    for (const existingBooking of existingBookings) {
+      // If existing booking is on break, check if new booking is within break time
+      if (existingBooking.status === 'on-break' && existingBooking.currentBreak) {
+        const isWithinBreak = isTimeWithinBreak(
+          startTime,
+          endTime,
+          existingBooking.currentBreak.startTime,
+          existingBooking.currentBreak.endTime
+        );
+
+        if (!isWithinBreak) {
+          // New booking overlaps with non-break time
+          const bookStartMin = timeToMinutes(existingBooking.startTime);
+          const bookEndMin = timeToMinutes(existingBooking.endTime);
+          const reqStartMin = timeToMinutes(startTime);
+          const reqEndMin = timeToMinutes(endTime);
+
+          if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+            return res.status(400).json({ 
+              message: 'Seat is already booked for this time slot (outside break time)' 
+            });
+          }
+        }
+        // If within break, booking is allowed
+      } else {
+        // Regular booking - check for overlap
+        const bookStartMin = timeToMinutes(existingBooking.startTime);
+        const bookEndMin = timeToMinutes(existingBooking.endTime);
+        const reqStartMin = timeToMinutes(startTime);
+        const reqEndMin = timeToMinutes(endTime);
+
+        if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+          return res.status(400).json({ 
+            message: 'Seat is already booked for this time slot' 
+          });
+        }
+      }
     }
 
     // Check for overlapping bookings from the same device
@@ -261,6 +300,34 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       });
     }
 
+    // Check if there's another booking during this break time
+    const dayStart = new Date(booking.date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(booking.date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const overlappingBreakBookings = await Booking.find({
+      seat: booking.seat._id,
+      date: {
+        $gte: dayStart,
+        $lt: dayEnd
+      },
+      _id: { $ne: booking._id }, // Exclude current booking
+      status: { $in: ['pending', 'confirmed'] }
+    });
+
+    for (const otherBooking of overlappingBreakBookings) {
+      const otherStartMin = timeToMinutes(otherBooking.startTime);
+      const otherEndMin = timeToMinutes(otherBooking.endTime);
+
+      // Check if other booking overlaps with break time
+      if (otherStartMin < breakEndMinutes && otherEndMin > breakStartMinutes) {
+        return res.status(400).json({ 
+          message: `Cannot take break. Another user has booked this seat during your break time (${otherBooking.startTime} - ${otherBooking.endTime})` 
+        });
+      }
+    }
+
     // Check for overlapping breaks
     if (booking.breaks && booking.breaks.length > 0) {
       for (const existingBreak of booking.breaks) {
@@ -296,7 +363,7 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
     const updatedBooking = await Booking.findById(bookingId).populate('seat');
 
     res.json({
-      message: 'Break started successfully',
+      message: 'Break started successfully. Your seat is now available for others during break time.',
       booking: updatedBooking,
       currentBreak: updatedBooking.currentBreak
     });
@@ -332,6 +399,36 @@ router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
       return res.status(400).json({ 
         message: 'No active break found' 
       });
+    }
+
+    // Check if someone else has booked during the break
+    const dayStart = new Date(booking.date);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(booking.date);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const breakBookings = await Booking.find({
+      seat: booking.seat._id,
+      date: {
+        $gte: dayStart,
+        $lt: dayEnd
+      },
+      _id: { $ne: booking._id },
+      status: { $in: ['pending', 'confirmed'] }
+    });
+
+    // Check if any booking is within the break time
+    for (const otherBooking of breakBookings) {
+      if (isTimeWithinBreak(
+        otherBooking.startTime,
+        otherBooking.endTime,
+        booking.currentBreak.startTime,
+        booking.currentBreak.endTime
+      )) {
+        return res.status(400).json({ 
+          message: `Cannot end break yet. Another user has booked this seat during your break (${otherBooking.startTime} - ${otherBooking.endTime}). Please wait until their booking ends.` 
+        });
+      }
     }
 
     // Save the break to history
