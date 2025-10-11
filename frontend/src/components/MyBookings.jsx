@@ -24,7 +24,7 @@ const MyBookings = () => {
   useEffect(() => {
     fetchBookings();
     
-    // Auto-refresh bookings every 30 seconds
+    // Auto-refresh bookings every 30 seconds to check for expirations
     const interval = setInterval(() => {
       fetchBookings();
     }, 30000);
@@ -140,6 +140,9 @@ const MyBookings = () => {
     if (booking.status === 'cancelled') {
       return <span style={styles.badgeCancelled}>Cancelled</span>;
     }
+    if (booking.status === 'completed') {
+      return <span style={styles.badgeCompleted}>Completed</span>;
+    }
     if (booking.status === 'on-break') {
       return <span style={styles.badgeOnBreak}>On Break</span>;
     }
@@ -150,7 +153,7 @@ const MyBookings = () => {
   };
 
   const needsAttendance = (booking) => {
-    if (booking.status === 'cancelled' || booking.attendanceConfirmed) {
+    if (booking.status === 'cancelled' || booking.status === 'completed' || booking.attendanceConfirmed) {
       return false;
     }
 
@@ -164,11 +167,23 @@ const MyBookings = () => {
     return now >= bookingDate && now <= deadlineTime;
   };
 
+  const isBookingActive = (booking) => {
+    // Active means: not cancelled, not completed, and either confirmed or on break
+    return booking.status !== 'cancelled' && 
+           booking.status !== 'completed' &&
+           (booking.status === 'confirmed' || booking.status === 'on-break' || booking.attendanceConfirmed);
+  };
+
+  const canTakeBreak = (booking) => {
+    return booking.status === 'confirmed' && booking.attendanceConfirmed;
+  };
+
   const filteredBookings = bookings.filter(booking => {
     if (filter === 'all') return true;
     if (filter === 'pending') return booking.status === 'pending' && !booking.attendanceConfirmed;
     if (filter === 'confirmed') return booking.attendanceConfirmed || booking.status === 'confirmed';
     if (filter === 'cancelled') return booking.status === 'cancelled';
+    if (filter === 'completed') return booking.status === 'completed';
     return true;
   });
 
@@ -242,6 +257,15 @@ const MyBookings = () => {
           Confirmed
         </button>
         <button
+          onClick={() => setFilter('completed')}
+          style={{
+            ...styles.filterButton,
+            ...(filter === 'completed' ? styles.filterButtonActive : {})
+          }}
+        >
+          Completed
+        </button>
+        <button
           onClick={() => setFilter('cancelled')}
           style={{
             ...styles.filterButton,
@@ -299,7 +323,19 @@ const MyBookings = () => {
                     <p style={styles.breakTime}>
                       {booking.currentBreak.startTime} - {booking.currentBreak.endTime}
                     </p>
+                    <p style={styles.breakNote}>
+                      Break will auto-end after {booking.currentBreak.endTime}
+                    </p>
                   </div>
+                </div>
+              )}
+
+              {/* Completed Status Info */}
+              {booking.status === 'completed' && (
+                <div style={styles.completedBox}>
+                  <p style={styles.completedText}>
+                    ✓ This booking has been completed
+                  </p>
                 </div>
               )}
 
@@ -326,7 +362,7 @@ const MyBookings = () => {
                   </button>
                 )}
 
-                {booking.status === 'confirmed' && booking.attendanceConfirmed && (
+                {canTakeBreak(booking) && (
                   <button
                     onClick={() => openBreakModal(booking)}
                     style={styles.breakButton}
@@ -344,7 +380,7 @@ const MyBookings = () => {
                   </button>
                 )}
 
-                {booking.status !== 'cancelled' && booking.status !== 'completed' && (
+                {isBookingActive(booking) && (
                   <button
                     onClick={() => handleCancelBooking(booking._id)}
                     style={styles.cancelButton}
@@ -370,7 +406,8 @@ const MyBookings = () => {
                 <li>Minimum break duration: 20 minutes</li>
                 <li>Break must be within your booking time</li>
                 <li>Your seat will be marked as "On Break" (Yellow)</li>
-                <li>You can return and end your break anytime</li>
+                <li>Break will automatically end at the specified time</li>
+                <li>You can manually end your break anytime before it expires</li>
               </ul>
             </div>
 
@@ -408,7 +445,7 @@ const MyBookings = () => {
                   type="time"
                   value={breakEndTime}
                   onChange={(e) => setBreakEndTime(e.target.value)}
-                  min={breakStartTime}
+                  min={selectedBookingForBreak.startTime}
                   max={selectedBookingForBreak.endTime}
                   style={styles.timeInput}
                 />
@@ -418,16 +455,10 @@ const MyBookings = () => {
             {error && <div style={styles.modalError}>{error}</div>}
 
             <div style={styles.modalActions}>
-              <button onClick={handleStartBreak} style={styles.confirmButton}>
+              <button onClick={handleStartBreak} style={styles.confirmBreakButton}>
                 Start Break
               </button>
-              <button 
-                onClick={() => {
-                  setShowBreakModal(false);
-                  setError('');
-                }} 
-                style={styles.cancelModalButton}
-              >
+              <button onClick={() => setShowBreakModal(false)} style={styles.cancelModalButton}>
                 Cancel
               </button>
             </div>
@@ -442,17 +473,13 @@ const styles = {
   container: {
     maxWidth: '1200px',
     margin: '0 auto',
-    padding: '20px',
-    backgroundColor: '#f5f5f5',
-    minHeight: '100vh'
+    padding: '20px'
   },
   header: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '30px',
-    flexWrap: 'wrap',
-    gap: '15px'
+    marginBottom: '30px'
   },
   title: {
     fontSize: '28px',
@@ -461,32 +488,32 @@ const styles = {
     margin: 0
   },
   backButton: {
-    backgroundColor: '#6c757d',
+    padding: '10px 20px',
+    backgroundColor: '#667eea',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    padding: '10px 20px',
-    fontSize: '14px',
-    fontWeight: '600',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '14px',
+    transition: 'background 0.3s'
   },
   filterContainer: {
     display: 'flex',
-    gap: '12px',
-    marginBottom: '30px',
+    gap: '10px',
+    marginBottom: '20px',
     flexWrap: 'wrap'
   },
   filterButton: {
     padding: '10px 20px',
-    backgroundColor: 'white',
-    color: '#666',
-    border: '1px solid #ddd',
+    border: '2px solid #667eea',
     borderRadius: '8px',
     cursor: 'pointer',
+    fontWeight: '600',
     fontSize: '14px',
-    fontWeight: '500',
-    transition: 'all 0.2s'
+    transition: 'all 0.3s',
+    backgroundColor: 'white',
+    color: '#667eea'
   },
   filterButtonActive: {
     backgroundColor: '#667eea',
@@ -581,6 +608,14 @@ const styles = {
     fontSize: '12px',
     fontWeight: '600'
   },
+  badgeCompleted: {
+    backgroundColor: '#e8f5e9',
+    color: '#2e7d32',
+    padding: '4px 12px',
+    borderRadius: '12px',
+    fontSize: '12px',
+    fontWeight: '600'
+  },
   bookingDetails: {
     marginBottom: '16px'
   },
@@ -602,97 +637,114 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
+    backgroundColor: '#fff8e1',
     padding: '12px',
-    backgroundColor: '#fff3e0',
     borderRadius: '8px',
     marginBottom: '12px',
-    borderLeft: '4px solid #ff9800'
+    border: '1px solid #ffd54f'
   },
   breakIcon: {
     fontSize: '24px'
   },
   breakTitle: {
-    margin: '0 0 4px 0',
-    fontSize: '14px',
     fontWeight: '600',
-    color: '#f57c00'
+    color: '#f57c00',
+    margin: '0 0 4px 0',
+    fontSize: '14px'
   },
   breakTime: {
+    color: '#666',
+    margin: '0 0 4px 0',
+    fontSize: '13px'
+  },
+  breakNote: {
+    color: '#888',
     margin: 0,
-    fontSize: '13px',
-    color: '#666'
+    fontSize: '12px',
+    fontStyle: 'italic'
+  },
+  completedBox: {
+    backgroundColor: '#e8f5e9',
+    padding: '12px',
+    borderRadius: '8px',
+    marginBottom: '12px',
+    border: '1px solid #a5d6a7'
+  },
+  completedText: {
+    color: '#2e7d32',
+    margin: 0,
+    fontSize: '14px',
+    fontWeight: '600'
   },
   breakHistoryBox: {
-    padding: '12px',
     backgroundColor: '#f5f5f5',
+    padding: '12px',
     borderRadius: '8px',
     marginBottom: '12px'
   },
   breakHistoryTitle: {
-    margin: '0 0 8px 0',
-    fontSize: '14px',
     fontWeight: '600',
-    color: '#666'
+    color: '#666',
+    margin: '0 0 8px 0',
+    fontSize: '13px'
   },
   breakHistoryItem: {
+    color: '#888',
     margin: '4px 0',
-    fontSize: '13px',
-    color: '#666',
-    paddingLeft: '12px'
+    fontSize: '12px'
   },
   bookingActions: {
     display: 'flex',
-    gap: '12px',
-    marginTop: '16px',
+    gap: '8px',
     flexWrap: 'wrap'
   },
   attendButton: {
     flex: 1,
-    backgroundColor: '#28a745',
+    padding: '10px 16px',
+    backgroundColor: '#4CAF50',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    padding: '10px 16px',
-    fontSize: '14px',
-    fontWeight: '600',
+    borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '13px',
+    transition: 'background 0.3s'
   },
   breakButton: {
     flex: 1,
-    backgroundColor: '#ff9800',
+    padding: '10px 16px',
+    backgroundColor: '#FF9800',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    padding: '10px 16px',
-    fontSize: '14px',
-    fontWeight: '600',
+    borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '13px',
+    transition: 'background 0.3s'
   },
   endBreakButton: {
     flex: 1,
-    backgroundColor: '#2196f3',
+    padding: '10px 16px',
+    backgroundColor: '#2196F3',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    padding: '10px 16px',
-    fontSize: '14px',
-    fontWeight: '600',
+    borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '13px',
+    transition: 'background 0.3s'
   },
   cancelButton: {
     flex: 1,
-    backgroundColor: '#dc3545',
+    padding: '10px 16px',
+    backgroundColor: '#f44336',
     color: 'white',
     border: 'none',
-    borderRadius: '8px',
-    padding: '10px 16px',
-    fontSize: '14px',
-    fontWeight: '600',
+    borderRadius: '6px',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '13px',
+    transition: 'background 0.3s'
   },
   modalOverlay: {
     position: 'fixed',
@@ -700,92 +752,88 @@ const styles = {
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
     display: 'flex',
-    alignItems: 'center',
     justifyContent: 'center',
+    alignItems: 'center',
     zIndex: 1000
   },
   modalContent: {
     backgroundColor: 'white',
     borderRadius: '12px',
-    padding: '30px',
+    padding: '24px',
     maxWidth: '500px',
     width: '90%',
     maxHeight: '90vh',
     overflowY: 'auto'
   },
   modalTitle: {
-    margin: '0 0 20px 0',
-    fontSize: '24px',
+    fontSize: '22px',
     fontWeight: 'bold',
-    color: '#333'
+    color: '#333',
+    marginBottom: '20px',
+    marginTop: 0
   },
   breakInfoBox: {
     backgroundColor: '#e3f2fd',
-    padding: '15px',
+    padding: '16px',
     borderRadius: '8px',
-    marginBottom: '15px'
+    marginBottom: '16px'
   },
   breakInfoTitle: {
-    margin: '0 0 10px 0',
-    fontSize: '14px',
     fontWeight: '600',
-    color: '#1976d2'
+    color: '#1976d2',
+    margin: '0 0 8px 0'
   },
   breakInfoList: {
-    margin: 0,
+    margin: '0',
     paddingLeft: '20px',
-    color: '#666',
-    fontSize: '13px'
+    color: '#555'
   },
   bookingSummary: {
     backgroundColor: '#f5f5f5',
-    padding: '15px',
+    padding: '12px',
     borderRadius: '8px',
-    marginBottom: '15px'
+    marginBottom: '16px'
   },
   existingBreaksBox: {
     backgroundColor: '#fff3e0',
-    padding: '15px',
+    padding: '12px',
     borderRadius: '8px',
-    marginBottom: '15px'
+    marginBottom: '16px'
   },
   existingBreaksTitle: {
-    margin: '0 0 8px 0',
-    fontSize: '14px',
     fontWeight: '600',
-    color: '#e65100'
+    color: '#f57c00',
+    margin: '0 0 8px 0',
+    fontSize: '14px'
   },
   existingBreakItem: {
-    margin: '4px 0',
-    fontSize: '13px',
     color: '#666',
-    paddingLeft: '12px',
-    borderLeft: '2px solid #ff9800'
+    margin: '4px 0',
+    fontSize: '13px'
   },
   breakTimeInputs: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '15px',
-    marginBottom: '15px'
+    display: 'flex',
+    gap: '16px',
+    marginBottom: '16px'
   },
   timeInputGroup: {
-    display: 'flex',
-    flexDirection: 'column'
+    flex: 1
   },
   inputLabel: {
-    fontSize: '14px',
+    display: 'block',
+    marginBottom: '8px',
     fontWeight: '600',
     color: '#333',
-    marginBottom: '8px'
+    fontSize: '14px'
   },
   timeInput: {
-    padding: '12px',
-    fontSize: '14px',
+    width: '100%',
+    padding: '10px',
     border: '2px solid #ddd',
-    borderRadius: '8px',
-    transition: 'border-color 0.3s'
+    borderRadius: '6px',
+    fontSize: '14px'
   },
   modalError: {
     backgroundColor: '#ffebee',
@@ -793,36 +841,34 @@ const styles = {
     color: '#c62828',
     padding: '12px',
     borderRadius: '8px',
-    marginBottom: '15px',
+    marginBottom: '16px',
     fontSize: '14px'
   },
   modalActions: {
     display: 'flex',
     gap: '12px'
   },
-  confirmButton: {
+  confirmBreakButton: {
     flex: 1,
     padding: '12px',
-    backgroundColor: '#28a745',
+    backgroundColor: '#4CAF50',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    fontSize: '16px',
-    fontWeight: '600',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '15px'
   },
   cancelModalButton: {
     flex: 1,
     padding: '12px',
-    backgroundColor: '#6c757d',
+    backgroundColor: '#9E9E9E',
     color: 'white',
     border: 'none',
     borderRadius: '8px',
-    fontSize: '16px',
-    fontWeight: '600',
     cursor: 'pointer',
-    transition: 'background-color 0.2s'
+    fontWeight: '600',
+    fontSize: '15px'
   }
 };
 

@@ -1,32 +1,49 @@
 const express = require('express');
+const router = express.Router();
 const Booking = require('../models/Booking');
 const Seat = require('../models/Seat');
 const User = require('../models/User');
 const { authenticateToken } = require('../middleware/auth');
-const { checkAttendance, scheduleAttendanceCheck, checkAndCancelExpiredBookings } = require('../services/attendanceChecker');
-const { generateDeviceFingerprint, hasValidFingerprint } = require('../utils/deviceFingerprint');
-const { validateBookingWindow, timeRangesOverlap } = require('../utils/timeValidation');
+const { 
+  checkAttendance, 
+  scheduleAttendanceCheck, 
+  checkAndCancelExpiredBookings 
+} = require('../services/attendanceChecker');
+const { checkUserBookingsExpiration } = require('../services/bookingExpirationService');
 
-const router = express.Router();
-
-// Helper function to convert time to minutes
-function timeToMinutes(timeStr) {
-  const [hours, minutes] = timeStr.split(':').map(Number);
+// Helper functions
+function timeToMinutes(time) {
+  const [hours, minutes] = time.split(':').map(Number);
   return hours * 60 + minutes;
 }
 
-// Check if requested time is completely within a break time
-function isTimeWithinBreak(requestStart, requestEnd, breakStart, breakEnd) {
-  const reqStartMin = timeToMinutes(requestStart);
-  const reqEndMin = timeToMinutes(requestEnd);
-  const breakStartMin = timeToMinutes(breakStart);
-  const breakEndMin = timeToMinutes(breakEnd);
-
-  // Requested time must be completely within break time
-  return reqStartMin >= breakStartMin && reqEndMin <= breakEndMin;
+function isTimeWithinBreak(startTime, endTime, breakStart, breakEnd) {
+  const start = timeToMinutes(startTime);
+  const end = timeToMinutes(endTime);
+  const bStart = timeToMinutes(breakStart);
+  const bEnd = timeToMinutes(breakEnd);
+  
+  return start >= bStart && end <= bEnd;
 }
 
-// Create a new booking
+function timeRangesOverlap(start1, end1, start2, end2) {
+  const s1 = timeToMinutes(start1);
+  const e1 = timeToMinutes(end1);
+  const s2 = timeToMinutes(start2);
+  const e2 = timeToMinutes(end2);
+  
+  return s1 < e2 && e1 > s2;
+}
+
+function generateDeviceFingerprint(req) {
+  const userAgent = req.headers['user-agent'] || '';
+  const acceptLanguage = req.headers['accept-language'] || '';
+  const acceptEncoding = req.headers['accept-encoding'] || '';
+  
+  return `${userAgent}-${acceptLanguage}-${acceptEncoding}`;
+}
+
+// Book a seat
 router.post('/book', authenticateToken, async (req, res) => {
   try {
     const { seatId, date, startTime, endTime } = req.body;
@@ -37,23 +54,13 @@ router.post('/book', authenticateToken, async (req, res) => {
       });
     }
 
-    // Validate booking window (8 AM - 6 PM)
-    const windowValidation = validateBookingWindow(startTime, endTime);
-    if (!windowValidation.isValid) {
+    if (!req.headers.cookie && !req.headers.authorization) {
       return res.status(400).json({ 
-        message: windowValidation.message 
-      });
-    }
-
-    // Generate device fingerprint
-    if (!hasValidFingerprint(req)) {
-      return res.status(400).json({ 
-        message: 'Unable to identify device. Please ensure cookies and headers are enabled.' 
+        message: 'Security validation failed. Please ensure cookies and headers are enabled.' 
       });
     }
     const deviceFingerprint = generateDeviceFingerprint(req);
 
-    // Check if seat exists and is available
     const seat = await Seat.findById(seatId);
     if (!seat) {
       return res.status(404).json({ 
@@ -73,7 +80,6 @@ router.post('/book', authenticateToken, async (req, res) => {
     const dayEnd = new Date(bookingDate);
     dayEnd.setHours(23, 59, 59, 999);
 
-    // Check for overlapping bookings on the same seat
     const existingBookings = await Booking.find({
       seat: seatId,
       date: {
@@ -83,9 +89,7 @@ router.post('/book', authenticateToken, async (req, res) => {
       status: { $in: ['pending', 'confirmed', 'on-break'] }
     });
 
-    // Check each existing booking
     for (const existingBooking of existingBookings) {
-      // If existing booking is on break, check if new booking is within break time
       if (existingBooking.status === 'on-break' && existingBooking.currentBreak) {
         const isWithinBreak = isTimeWithinBreak(
           startTime,
@@ -95,7 +99,6 @@ router.post('/book', authenticateToken, async (req, res) => {
         );
 
         if (!isWithinBreak) {
-          // New booking overlaps with non-break time
           const bookStartMin = timeToMinutes(existingBooking.startTime);
           const bookEndMin = timeToMinutes(existingBooking.endTime);
           const reqStartMin = timeToMinutes(startTime);
@@ -107,9 +110,7 @@ router.post('/book', authenticateToken, async (req, res) => {
             });
           }
         }
-        // If within break, booking is allowed
       } else {
-        // Regular booking - check for overlap
         const bookStartMin = timeToMinutes(existingBooking.startTime);
         const bookEndMin = timeToMinutes(existingBooking.endTime);
         const reqStartMin = timeToMinutes(startTime);
@@ -123,38 +124,6 @@ router.post('/book', authenticateToken, async (req, res) => {
       }
     }
 
-    // Check for overlapping bookings from the same device
-    const deviceBookings = await Booking.find({
-      deviceFingerprint: deviceFingerprint,
-      date: {
-        $gte: dayStart,
-        $lt: dayEnd
-      },
-      status: { $in: ['pending', 'confirmed', 'on-break'] }
-    }).populate('seat');
-
-    // Check if any existing booking from this device overlaps with the requested time
-    for (const existingDeviceBooking of deviceBookings) {
-      if (timeRangesOverlap(
-        existingDeviceBooking.startTime,
-        existingDeviceBooking.endTime,
-        startTime,
-        endTime
-      )) {
-        const seatNumber = existingDeviceBooking.seat ? existingDeviceBooking.seat.seatNumber : 'Unknown';
-        
-        return res.status(400).json({ 
-          message: `You already have a booking from ${existingDeviceBooking.startTime} to ${existingDeviceBooking.endTime} on this date. Multiple overlapping bookings from the same device are not allowed.`,
-          existingBooking: {
-            startTime: existingDeviceBooking.startTime,
-            endTime: existingDeviceBooking.endTime,
-            seatNumber: seatNumber
-          }
-        });
-      }
-    }
-
-    // Create booking
     const booking = new Booking({
       user: req.userId,
       seat: seatId,
@@ -162,28 +131,18 @@ router.post('/book', authenticateToken, async (req, res) => {
       startTime,
       endTime,
       status: 'pending',
-      deviceFingerprint: deviceFingerprint,
-      breaks: [],
-      currentBreak: null
+      deviceFingerprint,
+      attendanceConfirmed: false
     });
 
     await booking.save();
 
-    // Update seat status using findByIdAndUpdate
-    await Seat.findByIdAndUpdate(
-      seatId,
-      { $set: { status: 'occupied' } },
-      { runValidators: false }
-    );
+    seat.status = 'occupied';
+    await seat.save();
 
-    // Schedule attendance check (20 minutes after start time)
-    const scheduled = scheduleAttendanceCheck(booking);
-    if (scheduled) {
-      booking.autoCheckScheduled = true;
-      await booking.save();
-    }
+    scheduleAttendanceCheck(booking);
 
-    const populatedBooking = await Booking.findById(booking._id).populate('seat');
+    const populatedBooking = await Booking.findById(booking._id).populate('seat user');
 
     res.status(201).json({
       message: 'Booking created successfully. Please reach your seat within 20 minutes.',
@@ -206,8 +165,6 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
     const { bookingId } = req.params;
     const { breakStartTime, breakEndTime } = req.body;
 
-    console.log('Break request received:', { bookingId, breakStartTime, breakEndTime });
-
     if (!breakStartTime || !breakEndTime) {
       return res.status(400).json({ 
         message: 'Break start and end times are required' 
@@ -222,44 +179,31 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       });
     }
 
-    console.log('Booking found:', {
-      id: booking._id,
-      status: booking.status,
-      currentBreak: booking.currentBreak,
-      attendanceConfirmed: booking.attendanceConfirmed
-    });
-
     if (booking.user.toString() !== req.userId) {
       return res.status(403).json({ 
         message: 'Unauthorized' 
       });
     }
 
-    // Check if already on break - be more specific
     if (booking.currentBreak && booking.currentBreak.startTime) {
       return res.status(400).json({ 
         message: 'You are already on a break' 
       });
     }
 
-    // Accept both 'confirmed' and 'pending' with attendance confirmed
     if (booking.status !== 'confirmed' && !(booking.status === 'pending' && booking.attendanceConfirmed)) {
       return res.status(400).json({ 
         message: `Cannot take break. Status: ${booking.status}, Attendance confirmed: ${booking.attendanceConfirmed}. Please confirm attendance first.` 
       });
     }
 
-    // Validate break duration (minimum 20 minutes)
     const breakStartMinutes = timeToMinutes(breakStartTime);
     const breakEndMinutes = timeToMinutes(breakEndTime);
     let breakDuration = breakEndMinutes - breakStartMinutes;
     
-    // Handle overnight breaks (e.g., 23:00 to 00:30)
     if (breakDuration < 0) {
       breakDuration = (24 * 60 - breakStartMinutes) + breakEndMinutes;
     }
-
-    console.log('Break duration:', breakDuration, 'minutes');
 
     if (breakDuration < 20) {
       return res.status(400).json({ 
@@ -267,11 +211,9 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       });
     }
 
-    // Validate break is within booking time
     const bookingStartMinutes = timeToMinutes(booking.startTime);
     let bookingEndMinutes = timeToMinutes(booking.endTime);
     
-    // Handle overnight bookings
     if (bookingEndMinutes < bookingStartMinutes) {
       bookingEndMinutes += 24 * 60;
     }
@@ -279,7 +221,6 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
     let adjustedBreakStart = breakStartMinutes;
     let adjustedBreakEnd = breakEndMinutes;
 
-    // Adjust for overnight scenarios
     if (breakStartMinutes < bookingStartMinutes && bookingEndMinutes > 24 * 60) {
       adjustedBreakStart += 24 * 60;
     }
@@ -287,20 +228,12 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       adjustedBreakEnd += 24 * 60;
     }
 
-    console.log('Time validation:', {
-      bookingStart: bookingStartMinutes,
-      bookingEnd: bookingEndMinutes,
-      breakStart: adjustedBreakStart,
-      breakEnd: adjustedBreakEnd
-    });
-
     if (adjustedBreakStart < bookingStartMinutes || adjustedBreakEnd > bookingEndMinutes) {
       return res.status(400).json({ 
         message: `Break must be within your booking time slot (${booking.startTime} - ${booking.endTime})` 
       });
     }
 
-    // Check if there's another booking during this break time
     const dayStart = new Date(booking.date);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(booking.date);
@@ -312,7 +245,7 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
         $gte: dayStart,
         $lt: dayEnd
       },
-      _id: { $ne: booking._id }, // Exclude current booking
+      _id: { $ne: booking._id },
       status: { $in: ['pending', 'confirmed'] }
     });
 
@@ -320,7 +253,6 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       const otherStartMin = timeToMinutes(otherBooking.startTime);
       const otherEndMin = timeToMinutes(otherBooking.endTime);
 
-      // Check if other booking overlaps with break time
       if (otherStartMin < breakEndMinutes && otherEndMin > breakStartMinutes) {
         return res.status(400).json({ 
           message: `Cannot take break. Another user has booked this seat during your break time (${otherBooking.startTime} - ${otherBooking.endTime})` 
@@ -328,7 +260,6 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       }
     }
 
-    // Check for overlapping breaks
     if (booking.breaks && booking.breaks.length > 0) {
       for (const existingBreak of booking.breaks) {
         if (timeRangesOverlap(
@@ -344,7 +275,6 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       }
     }
 
-    // Start the break
     booking.currentBreak = {
       startTime: breakStartTime,
       endTime: breakEndTime,
@@ -352,13 +282,10 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
     };
     booking.status = 'on-break';
     
-    // Mark as modified to ensure save
     booking.markModified('currentBreak');
     booking.markModified('status');
     
     await booking.save();
-
-    console.log('Break started successfully for booking:', bookingId);
 
     const updatedBooking = await Booking.findById(bookingId).populate('seat');
 
@@ -401,7 +328,6 @@ router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check if someone else has booked during the break
     const dayStart = new Date(booking.date);
     dayStart.setHours(0, 0, 0, 0);
     const dayEnd = new Date(booking.date);
@@ -417,7 +343,6 @@ router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
       status: { $in: ['pending', 'confirmed'] }
     });
 
-    // Check if any booking is within the break time
     for (const otherBooking of breakBookings) {
       if (isTimeWithinBreak(
         otherBooking.startTime,
@@ -431,7 +356,6 @@ router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
       }
     }
 
-    // Save the break to history
     if (!booking.breaks) {
       booking.breaks = [];
     }
@@ -442,7 +366,6 @@ router.post('/end-break/:bookingId', authenticateToken, async (req, res) => {
       takenAt: booking.currentBreak.startedAt
     });
 
-    // Clear current break and restore status
     booking.currentBreak = null;
     booking.status = 'confirmed';
     
@@ -479,7 +402,6 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
       });
     }
 
-    // Update user location first
     const user = await User.findById(req.userId);
     if (user) {
       await User.findByIdAndUpdate(
@@ -495,7 +417,6 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
       );
     }
 
-    // Check attendance
     const result = await checkAttendance(bookingId);
 
     if (result.success) {
@@ -522,10 +443,13 @@ router.post('/confirm-attendance/:bookingId', authenticateToken, async (req, res
 // Get user bookings
 router.get('/my-bookings', authenticateToken, async (req, res) => {
   try {
-    // First, check and cancel any expired bookings
+    // Check for expired bookings (attendance deadline passed)
     await checkAndCancelExpiredBookings(req.userId);
     
-    // Then fetch all bookings
+    // Check for completed bookings (slot time expired) and ended breaks
+    await checkUserBookingsExpiration(req.userId);
+    
+    // Fetch all bookings
     const bookings = await Booking.find({ user: req.userId })
       .populate('seat')
       .sort({ date: -1, startTime: -1 });
@@ -551,10 +475,9 @@ router.get('/:bookingId', authenticateToken, async (req, res) => {
       });
     }
 
-    // Check if user owns this booking
     if (booking.user._id.toString() !== req.userId) {
       return res.status(403).json({ 
-        message: 'Unauthorized access' 
+        message: 'Unauthorized access to booking' 
       });
     }
 
@@ -567,10 +490,10 @@ router.get('/:bookingId', authenticateToken, async (req, res) => {
   }
 });
 
-// Cancel booking
+// Cancel a booking
 router.delete('/:bookingId', authenticateToken, async (req, res) => {
   try {
-    const booking = await Booking.findById(req.params.bookingId);
+    const booking = await Booking.findById(req.params.bookingId).populate('seat');
 
     if (!booking) {
       return res.status(404).json({ 
@@ -592,18 +515,19 @@ router.delete('/:bookingId', authenticateToken, async (req, res) => {
 
     booking.status = 'cancelled';
     booking.cancellationReason = 'Cancelled by user';
-    booking.currentBreak = null; // Clear any active break
     await booking.save();
 
-    // Free up the seat
-    await Seat.findByIdAndUpdate(
-      booking.seat,
-      { $set: { status: 'available' } },
-      { runValidators: false }
-    );
+    if (booking.seat) {
+      await Seat.findByIdAndUpdate(
+        booking.seat._id,
+        { $set: { status: 'available' } },
+        { runValidators: false }
+      );
+    }
 
     res.json({ 
-      message: 'Booking cancelled successfully' 
+      message: 'Booking cancelled successfully',
+      booking 
     });
   } catch (error) {
     console.error('Cancel booking error:', error);

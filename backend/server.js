@@ -12,18 +12,24 @@ app.use(cors());
 app.use(express.json());
 
 // Database connection
-mongoose.connect(process.env.MONGO_URI , {
+mongoose.connect(process.env.MONGO_URI || 'mongodb://localhost:27017/library-booking', {
   useNewUrlParser: true,
   useUnifiedTopology: true
 })
-.then(() => console.log('Connected to MongoDB'))
-.catch(err => console.error('MongoDB connection error:', err));
+.then(() => {
+  console.log('✓ Connected to MongoDB');
+  
+  // Start the booking expiration checker after DB connection
+  startExpirationChecker();
+})
+.catch((error) => console.error('MongoDB connection error:', error));
 
 // Routes
 const authRoutes = require('./routes/auth');
 const seatRoutes = require('./routes/seats');
 const bookingRoutes = require('./routes/bookings');
 const userRoutes = require('./routes/users');
+const { startExpirationChecker } = require('./services/bookingExpirationService');
 
 app.use('/api/auth', authRoutes);
 app.use('/api/seats', seatRoutes);
@@ -31,8 +37,23 @@ app.use('/api/bookings', bookingRoutes);
 app.use('/api/users', userRoutes);
 
 // Health check route
-app.get('/health', (req, res) => {
-  res.json({ status: 'OK', timestamp: new Date() });
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    message: 'Server is running',
+    features: {
+      autoExpiration: 'enabled',
+      autoBreakEnd: 'enabled'
+    }
+  });
+});
+
+app.use((err, req, res, next) => {
+  console.error(err.stack);
+  res.status(500).json({ 
+    message: 'Something went wrong!',
+    error: process.env.NODE_ENV === 'development' ? err.message : undefined
+  });
 });
 
 // Restore pending bookings attendance checks on server restart
