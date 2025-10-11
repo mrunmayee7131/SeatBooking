@@ -86,11 +86,15 @@ router.get('/', authenticateToken, async (req, res) => {
                 ownerName: booking.user?.name || 'User'
               };
             } else {
-              // If not completely within break, seat is not available
-              isBooked = true;
+              // If not completely within break, check if there's overlap with non-break time
+              // FIXED: Only mark as booked if there's actual time overlap with non-break portions
+              if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
+                isBooked = true;
+              }
             }
           } else {
             // Regular booking - check for overlap
+            // FIXED: This is the key change - only check for time overlap, not entire day
             if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
               isBooked = true;
               bookingStatus = booking.status;
@@ -174,14 +178,16 @@ router.get('/available', authenticateToken, async (req, res) => {
 
           if (!isWithinBreak) {
             // Requested time is not within break, check normal overlap
+            // FIXED: Only check for actual time overlap
             if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
               seatAvailable = false;
               break;
             }
           }
-          // If within break, seat is available
+          // If within break, seat is available - continue to next booking
         } else {
           // Regular booking - check for overlap
+          // FIXED: This is the critical fix - check ONLY for time overlap
           if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
             seatAvailable = false;
             break;

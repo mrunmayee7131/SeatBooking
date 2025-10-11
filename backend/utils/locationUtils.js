@@ -36,7 +36,7 @@ function calculateDistance(lat1, lon1, lat2, lon2) {
  * Check if user is within attendance radius of library
  * @param {number} userLat - User's latitude
  * @param {number} userLon - User's longitude
- * @returns {object} Result with isWithin boolean and distance
+ * @returns {boolean} True if within radius
  */
 function isWithinAttendanceRadius(userLat, userLon) {
   const distance = calculateDistance(
@@ -46,19 +46,32 @@ function isWithinAttendanceRadius(userLat, userLon) {
     LIBRARY_COORDINATES.longitude
   );
 
-  console.log('📍 Attendance Check:', {
-    userLocation: { lat: userLat, lon: userLon },
-    libraryLocation: LIBRARY_COORDINATES,
-    calculatedDistance: Math.round(distance),
-    allowedRadius: ATTENDANCE_RADIUS_METERS,
-    isWithin: distance <= ATTENDANCE_RADIUS_METERS
-  });
+  const isWithin = distance <= ATTENDANCE_RADIUS_METERS;
 
-  return distance <= ATTENDANCE_RADIUS_METERS;
+  // DETAILED LOGGING FOR DEBUGGING
+  console.log('========================================');
+  console.log('📍 ATTENDANCE CHECK - DETAILED LOG');
+  console.log('========================================');
+  console.log('User Location:', {
+    latitude: userLat,
+    longitude: userLon
+  });
+  console.log('Library Location:', {
+    latitude: LIBRARY_COORDINATES.latitude,
+    longitude: LIBRARY_COORDINATES.longitude
+  });
+  console.log('Distance Calculation:');
+  console.log(`  - Calculated Distance: ${Math.round(distance)} meters`);
+  console.log(`  - Allowed Radius: ${ATTENDANCE_RADIUS_METERS} meters`);
+  console.log(`  - Difference: ${Math.round(distance - ATTENDANCE_RADIUS_METERS)} meters ${distance > ATTENDANCE_RADIUS_METERS ? 'TOO FAR' : 'WITHIN RANGE'}`);
+  console.log('Result:', isWithin ? '✅ WITHIN RADIUS - ALLOWED' : '❌ OUTSIDE RADIUS - DENIED');
+  console.log('========================================\n');
+
+  return isWithin;
 }
 
 /**
- * Get distance from library
+ * Get distance from library with detailed info
  * @param {number} userLat - User's latitude
  * @param {number} userLon - User's longitude
  * @returns {number} Distance in meters
@@ -72,11 +85,15 @@ function getDistanceFromLibrary(userLat, userLon) {
   );
 }
 
-// Log configuration on startup
-console.log('🏛️ Library Location Configuration:', {
-  coordinates: LIBRARY_COORDINATES,
-  radius: `${ATTENDANCE_RADIUS_METERS} meters`
-});
+// Log configuration on startup with detailed info
+console.log('\n🏛️  LIBRARY LOCATION SERVICE - CONFIGURATION');
+console.log('=============================================');
+console.log('Library Coordinates:');
+console.log(`  Latitude:  ${LIBRARY_COORDINATES.latitude}`);
+console.log(`  Longitude: ${LIBRARY_COORDINATES.longitude}`);
+console.log(`Attendance Radius: ${ATTENDANCE_RADIUS_METERS} meters`);
+console.log('Source: ' + (process.env.LIBRARY_LATITUDE ? '.env file' : 'default values'));
+console.log('=============================================\n');
 
 module.exports = {
   LIBRARY_COORDINATES,

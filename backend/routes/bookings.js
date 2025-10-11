@@ -10,6 +10,7 @@ const {
   checkAndCancelExpiredBookings 
 } = require('../services/attendanceChecker');
 const { checkUserBookingsExpiration } = require('../services/bookingExpirationService');
+const { validateBookingWindow } = require('../utils/timeValidation');
 
 // Helper functions
 function timeToMinutes(time) {
@@ -43,7 +44,7 @@ function generateDeviceFingerprint(req) {
   return `${userAgent}-${acceptLanguage}-${acceptEncoding}`;
 }
 
-// Book a seat
+// Book a seat - FIXED VERSION
 router.post('/book', authenticateToken, async (req, res) => {
   try {
     const { seatId, date, startTime, endTime } = req.body;
@@ -54,9 +55,49 @@ router.post('/book', authenticateToken, async (req, res) => {
       });
     }
 
-    if (!req.headers.cookie && !req.headers.authorization) {
+    // Validate booking window
+    const bookingWindowCheck = validateBookingWindow(startTime, endTime);
+    if (!bookingWindowCheck.isValid) {
       return res.status(400).json({ 
-        message: 'Security validation failed. Please ensure cookies and headers are enabled.' 
+        message: bookingWindowCheck.message 
+      });
+    }
+
+    // Check if user already has a booking in THIS SPECIFIC time slot
+    const bookingDate = new Date(date);
+    const dayStart = new Date(bookingDate);
+    dayStart.setHours(0, 0, 0, 0);
+    const dayEnd = new Date(bookingDate);
+    dayEnd.setHours(23, 59, 59, 999);
+
+    const userBookings = await Booking.find({
+      user: req.userId,
+      date: {
+        $gte: dayStart,
+        $lt: dayEnd
+      },
+      status: { $in: ['pending', 'confirmed', 'on-break'] }
+    });
+
+    // FIXED: Check for time overlap only, not entire day
+    for (const userBooking of userBookings) {
+      const bookStartMin = timeToMinutes(userBooking.startTime);
+      const bookEndMin = timeToMinutes(userBooking.endTime);
+      const reqStartMin = timeToMinutes(startTime);
+      const reqEndMin = timeToMinutes(endTime);
+
+      // Check for overlap: reqStart < bookEnd AND bookStart < reqEnd
+      if (reqStartMin < bookEndMin && bookStartMin < reqEndMin) {
+        return res.status(400).json({ 
+          message: `You already have a booking from ${userBooking.startTime} to ${userBooking.endTime}. Cannot book overlapping time slots.` 
+        });
+      }
+    }
+
+    // Check device fingerprint
+    if (!req.headers['user-agent'] || !req.headers['accept-language']) {
+      return res.status(400).json({ 
+        message: 'Browser information is required to make a booking. Please ensure cookies and headers are enabled.' 
       });
     }
     const deviceFingerprint = generateDeviceFingerprint(req);
@@ -74,12 +115,7 @@ router.post('/book', authenticateToken, async (req, res) => {
       });
     }
 
-    const bookingDate = new Date(date);
-    const dayStart = new Date(bookingDate);
-    dayStart.setHours(0, 0, 0, 0);
-    const dayEnd = new Date(bookingDate);
-    dayEnd.setHours(23, 59, 59, 999);
-
+    // FIXED: Check if seat has conflicting bookings for THIS SPECIFIC time slot
     const existingBookings = await Booking.find({
       seat: seatId,
       date: {
@@ -89,8 +125,15 @@ router.post('/book', authenticateToken, async (req, res) => {
       status: { $in: ['pending', 'confirmed', 'on-break'] }
     });
 
+    // Check each existing booking for time conflicts
     for (const existingBooking of existingBookings) {
+      const bookStartMin = timeToMinutes(existingBooking.startTime);
+      const bookEndMin = timeToMinutes(existingBooking.endTime);
+      const reqStartMin = timeToMinutes(startTime);
+      const reqEndMin = timeToMinutes(endTime);
+
       if (existingBooking.status === 'on-break' && existingBooking.currentBreak) {
+        // If the booking is on break, check if requested time is within the break
         const isWithinBreak = isTimeWithinBreak(
           startTime,
           endTime,
@@ -99,23 +142,18 @@ router.post('/book', authenticateToken, async (req, res) => {
         );
 
         if (!isWithinBreak) {
-          const bookStartMin = timeToMinutes(existingBooking.startTime);
-          const bookEndMin = timeToMinutes(existingBooking.endTime);
-          const reqStartMin = timeToMinutes(startTime);
-          const reqEndMin = timeToMinutes(endTime);
-
+          // Requested time is NOT within break, check for overlap with non-break portions
+          // FIXED: Only reject if there's actual time overlap
           if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
             return res.status(400).json({ 
               message: 'Seat is already booked for this time slot (outside break time)' 
             });
           }
         }
+        // If within break, this booking doesn't conflict - continue
       } else {
-        const bookStartMin = timeToMinutes(existingBooking.startTime);
-        const bookEndMin = timeToMinutes(existingBooking.endTime);
-        const reqStartMin = timeToMinutes(startTime);
-        const reqEndMin = timeToMinutes(endTime);
-
+        // Regular booking - check for ANY time overlap
+        // FIXED: This is the key fix - check ONLY time overlap
         if (reqStartMin < bookEndMin && reqEndMin > bookStartMin) {
           return res.status(400).json({ 
             message: 'Seat is already booked for this time slot' 
@@ -124,6 +162,7 @@ router.post('/book', authenticateToken, async (req, res) => {
       }
     }
 
+    // Create the booking
     const booking = new Booking({
       user: req.userId,
       seat: seatId,
