@@ -7,37 +7,28 @@ function timeToMinutes(timeStr) {
 }
 
 /**
- * Validate if booking times are within allowed window (8 AM - 6 PM)
+ * Validate if booking times are valid (24/7 booking allowed)
  */
 function validateBookingWindow(startTime, endTime) {
   const startMinutes = timeToMinutes(startTime);
   const endMinutes = timeToMinutes(endTime);
   
-  // 8 AM = 480 minutes, 6 PM = 1080 minutes, 1 AM = 60 minutes
-  const windowStart = 8 * 60; // 8 AM
-  const windowEnd = 18 * 60;   // 6 PM
-  const midnightCutoff = 1 * 60; // 1 AM next day
-
-  // Allow bookings from 8 AM to 6 PM, or extending past midnight until 1 AM
-  const isStartValid = startMinutes >= windowStart && startMinutes < 24 * 60;
-  const isEndValid = (endMinutes >= windowStart && endMinutes <= 24 * 60) || 
-                     (endMinutes <= midnightCutoff);
-
-  if (!isStartValid || !isEndValid) {
+  // CHANGED: Allow 24/7 booking - No time restrictions!
+  // Users can book any time of day, any day of the week
+  
+  // Only validation: Ensure end time is after start time
+  // Handle times that cross midnight (e.g., 23:00 to 02:00)
+  if (startMinutes === endMinutes) {
     return {
       isValid: false,
-      message: 'Bookings must be between 8:00 AM and 6:00 PM (can extend to 1:00 AM next day)'
+      message: 'Start time and end time cannot be the same'
     };
   }
 
-  // Ensure end time is after start time
-  if (endMinutes <= startMinutes && endMinutes > midnightCutoff) {
-    return {
-      isValid: false,
-      message: 'End time must be after start time'
-    };
-  }
-
+  // If end time is less than start time, it means booking crosses midnight
+  // This is allowed (e.g., 11 PM to 2 AM next day)
+  // We just need to ensure it's not the same time
+  
   return { isValid: true };
 }
 
