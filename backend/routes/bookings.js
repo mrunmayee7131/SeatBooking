@@ -108,8 +108,8 @@ router.post('/book', authenticateToken, async (req, res) => {
         message: 'Seat not found' 
       });
     }
-
-    if (seat.status !== 'available') {
+   console.log('seat',seat);
+    if (seat.status == 'occupied' ) {
       return res.status(400).json({ 
         message: 'Seat is not available' 
       });
@@ -211,7 +211,7 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
     }
 
     const booking = await Booking.findById(bookingId).populate('seat');
-
+    const seat  = await Seat.findById(booking.seat._id);
     if (!booking) {
       return res.status(404).json({ 
         message: 'Booking not found' 
@@ -319,15 +319,16 @@ router.post('/start-break/:bookingId', authenticateToken, async (req, res) => {
       endTime: breakEndTime,
       startedAt: new Date()
     };
+    seat.status = 'on-break';
     booking.status = 'on-break';
     
     booking.markModified('currentBreak');
     booking.markModified('status');
-    
+    await seat.save();
     await booking.save();
 
     const updatedBooking = await Booking.findById(bookingId).populate('seat');
-
+   console.log('updatedBooking',updatedBooking);
     res.json({
       message: 'Break started successfully. Your seat is now available for others during break time.',
       booking: updatedBooking,

@@ -25,7 +25,7 @@ async function checkAttendance(bookingId) {
     }
 
     const user = booking.user;
-
+    console.log('User last known location:', user);
     if (!user.lastKnownLocation || !user.lastKnownLocation.latitude) {
       return { 
         success: false, 

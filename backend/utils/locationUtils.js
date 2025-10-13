@@ -2,8 +2,8 @@
 
 // Get library coordinates from environment variables or use defaults
 const LIBRARY_COORDINATES = {
-  latitude: parseFloat(process.env.LIBRARY_LATITUDE) || 25.261071,
-  longitude: parseFloat(process.env.LIBRARY_LONGITUDE) || 82.983812
+  latitude: process.env.LIBRARY_LATITUDE || 25.261071,
+  longitude: process.env.LIBRARY_LONGITUDE || 82.983812
 };
 
 const ATTENDANCE_RADIUS_METERS = parseInt(process.env.ATTENDANCE_RADIUS_METERS) || 100;

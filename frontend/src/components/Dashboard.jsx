@@ -136,7 +136,7 @@ const Dashboard = () => {
   };
 
   const getSeatBackgroundColor = (seat) => {
-    // Seat is available during break time
+    // ENHANCED: Seat is available during break time
     if (seat.availableInBreak) {
       return '#FFC107'; // Yellow - available during break
     }
@@ -162,10 +162,10 @@ const Dashboard = () => {
 
   const getSeatTitle = (seat) => {
     if (seat.availableInBreak) {
-      return `Available during break (${seat.breakTimeInfo.breakStart} - ${seat.breakTimeInfo.breakEnd})`;
+      return `Available during ${seat.breakTimeInfo?.ownerName || 'user'}'s break (${seat.breakTimeInfo?.breakStart} - ${seat.breakTimeInfo?.breakEnd}). Click to book!`;
     }
     if (seat.isOnBreak) {
-      return 'Seat is on break (not available for your selected time)';
+      return 'Seat is on break (your selected time is not strictly within the break period)';
     }
     if (seat.isBooked) {
       return 'Seat is occupied';
@@ -198,8 +198,8 @@ const Dashboard = () => {
       date: selectedDate,
       startTime,
       endTime,
-      isBreakBooking: seat.availableInBreak,
-      breakInfo: seat.breakTimeInfo
+      isBreakBooking: seat.availableInBreak || false,
+      breakInfo: seat.breakTimeInfo || null
     });
     setShowConfirmModal(true);
   };
@@ -209,7 +209,7 @@ const Dashboard = () => {
 
     try {
       const token = localStorage.getItem('token');
-      await axios.post(
+      const response = await axios.post(
         'http://localhost:5000/api/bookings/book',
         {
           seatId: pendingBooking.seatId,
@@ -221,12 +221,12 @@ const Dashboard = () => {
           headers: { Authorization: `Bearer ${token}` }
         }
       );
-
+       console.log('response',response);
       setShowConfirmModal(false);
       setPendingBooking(null);
       
       if (pendingBooking.isBreakBooking) {
-        alert('Break booking successful! You can use this seat during the break time.');
+        alert(`✅ Break-time booking successful! You can use Seat ${pendingBooking.seatNumber} from ${pendingBooking.startTime} to ${pendingBooking.endTime} during ${pendingBooking.breakInfo?.ownerName || 'another user'}'s break. Please confirm your attendance within 20 minutes.`);
       } else {
         alert('Booking successful! Please confirm your attendance within 20 minutes.');
       }
@@ -344,7 +344,7 @@ const Dashboard = () => {
               </div>
             </div>
             <div style={styles.timeNote}>
-              ⏰ Booking hours: 8:00 AM - 6:00 PM (can extend to 1:00 AM next day)
+              ⏰ 24/7 booking available. You can book seats anytime!
             </div>
           </div>
         )}
@@ -369,7 +369,11 @@ const Dashboard = () => {
               </div>
               <div style={styles.legendItem}>
                 <div style={{ ...styles.legendBox, backgroundColor: '#FFC107' }}></div>
-                <span>Available (Break Time)</span>
+                <span>Available (Break Time) - Click to book!</span>
+              </div>
+              <div style={styles.legendItem}>
+                <div style={{ ...styles.legendBox, backgroundColor: '#FF9800' }}></div>
+                <span>On Break (Not available for your time)</span>
               </div>
               <div style={styles.legendItem}>
                 <div style={{ ...styles.legendBox, backgroundColor: '#f44336' }}></div>
@@ -406,10 +410,11 @@ const Dashboard = () => {
                       {seat.hasLamp && <span style={styles.amenityIcon}>💡</span>}
                     </div>
                     {seat.availableInBreak && (
-                      <div style={{ fontSize: '16px', marginTop: '4px' }}>⏰</div>
+                      <div style={{ fontSize: '20px', marginTop: '4px' }}>⏰</div>
                     )}
                     <div style={styles.seatStatus}>
                       {seat.availableInBreak ? 'Break Time' :
+                       seat.isOnBreak ? 'On Break' :
                        seat.status === 'available' ? 'Available' : 
                        seat.status === 'occupied' ? 'Occupied' : 'Maintenance'}
                     </div>
@@ -434,7 +439,7 @@ const Dashboard = () => {
           <div style={styles.modalContent}>
             <div style={styles.modalHeader}>
               <h2 style={styles.modalTitle}>
-                {pendingBooking.isBreakBooking ? 'Confirm Break Time Booking' : 'Confirm Booking'}
+                {pendingBooking.isBreakBooking ? '⏰ Confirm Break Time Booking' : 'Confirm Booking'}
               </h2>
             </div>
 
@@ -456,31 +461,32 @@ const Dashboard = () => {
                 </span>
               </div>
 
-              {pendingBooking.isBreakBooking && (
+              {pendingBooking.isBreakBooking && pendingBooking.breakInfo && (
                 <div style={styles.breakBookingInfo}>
                   <div style={styles.breakInfoIcon}>⏰</div>
                   <div>
-                    <strong>Break Time Booking</strong>
-                    <p style={{ margin: '5px 0 0 0', fontSize: '14px' }}>
-                      This seat is on break from {pendingBooking.breakInfo.breakStart} to {pendingBooking.breakInfo.breakEnd}.
-                      You can use it during this time.
+                    <strong style={{ fontSize: '16px', color: '#e65100' }}>Break Time Booking</strong>
+                    <p style={{ margin: '8px 0 0 0', fontSize: '14px', lineHeight: '1.5' }}>
+                      This seat is on break from <strong>{pendingBooking.breakInfo.breakStart}</strong> to <strong>{pendingBooking.breakInfo.breakEnd}</strong>.
+                      You can use it during this time period.
                     </p>
-                    <p style={{ margin: '5px 0 0 0', fontSize: '13px', color: '#666' }}>
-                      Owner: {pendingBooking.breakInfo.ownerName}
+                    <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#666' }}>
+                      <strong>Owner:</strong> {pendingBooking.breakInfo.ownerName}
+                    </p>
+                    <p style={{ margin: '8px 0 0 0', fontSize: '13px', color: '#2e7d32', fontWeight: 'bold' }}>
+                      ✅ Your booking time is strictly within the break period
                     </p>
                   </div>
                 </div>
               )}
 
-              {!pendingBooking.isBreakBooking && (
-                <div style={styles.warningBox}>
-                  <div style={styles.warningIcon}>⚠️</div>
-                  <div style={styles.warningText}>
-                    <strong>Important:</strong> You must confirm your attendance within 20 minutes 
-                    of your booking start time, or your booking will be automatically cancelled.
-                  </div>
+              <div style={styles.warningBox}>
+                <div style={styles.warningIcon}>⚠️</div>
+                <div style={styles.warningText}>
+                  <strong>Important:</strong> You must confirm your attendance within 20 minutes 
+                  of your booking start time, or your booking will be automatically cancelled.
                 </div>
-              )}
+              </div>
             </div>
 
             <div style={styles.modalFooter}>
@@ -521,7 +527,7 @@ const styles = {
     background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
     padding: '30px 20px',
     color: 'white',
-    boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+    boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
   },
   headerContent: {
     maxWidth: '1200px',
@@ -664,12 +670,13 @@ const styles = {
   timeNote: {
     marginTop: '15px',
     padding: '12px',
-    backgroundColor: '#fff3cd',
-    border: '1px solid #ffc107',
+    backgroundColor: '#e3f2fd',
+    border: '1px solid #2196F3',
     borderRadius: '8px',
-    color: '#856404',
+    color: '#1565c0',
     fontSize: '14px',
-    textAlign: 'center'
+    textAlign: 'center',
+    gridColumn: '1 / -1'
   },
   error: {
     backgroundColor: '#ffebee',
@@ -684,7 +691,11 @@ const styles = {
     display: 'flex',
     gap: '20px',
     marginBottom: '20px',
-    flexWrap: 'wrap'
+    flexWrap: 'wrap',
+    padding: '15px',
+    backgroundColor: 'white',
+    borderRadius: '12px',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.1)'
   },
   legendItem: {
     display: 'flex',
@@ -864,8 +875,8 @@ const styles = {
     borderRadius: '10px',
     cursor: 'pointer',
     transition: 'all 0.3s',
-    boxShadow: '0 4px 15px rgba(102, 126, 234, 0.4)'
+    boxShadow: '0 4px  6px rgba(0,0,0,0.1)'
   }
 };
 
-export default Dashboard;
+export default Dashboard
